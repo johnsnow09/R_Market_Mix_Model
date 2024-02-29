@@ -1,0 +1,112 @@
+---
+title: "Marketing Budget Optimization using lpsolve"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: false
+    toc_depth: 6
+---
+
+lpsolve video: https://www.youtube.com/watch?v=iKcia8_W4wk
+
+Video link in R: https://www.youtube.com/watch?v=Qvv-OoUYMKM&list=PLIO9zcmAtJoqfybhXenjL-XRB8Zc-CZEs&index=7
+
+Series Excel links: https://www.youtube.com/watch?v=W6eX9_tyQws&list=PLIO9zcmAtJoqfybhXenjL-XRB8Zc-CZEs&index=4
+
+
+### lpsolve
+
+```{r}
+library(lpSolve)
+library(tidyverse)
+```
+
+```{r}
+options(scipen = 999)
+```
+
+
+
+```{r}
+Channel <- c("tv","seo","adwords","facebook")
+ROI <- c(.09, .14, .10, .05)
+
+ROI
+```
+
+
+```{r}
+const.mat <- rbind(c(1,1,1,1),
+                c(0,1,0,0),
+                c(0,0,0,1),
+                c(1,0,0,0),
+                c(0,0,0,1),
+                c(0,1,0,0),
+                c(0,1,0,0),
+                c(0,1,3,0),
+                c(1,1,1,1))
+
+const.mat
+```
+
+```{r}
+budget_constr <- 1000000
+seo_budg_60_per <- .60 * 1000000
+fb_budg_20_per <- .20 * 1000000
+tv_min_200grand <- 200000
+fb_min_cont_80grand <- 80000
+seo_min_cont_60grand <- 60000
+seo_max_cont_220grand <- 220000
+adwords_max_cont_3xseo <- 0
+Market_size <- 1300000
+```
+
+
+```{r}
+const.rhs <- c(budget_constr,seo_budg_60_per,fb_budg_20_per,tv_min_200grand,fb_min_cont_80grand,
+  seo_min_cont_60grand,seo_max_cont_220grand,adwords_max_cont_3xseo,Market_size)
+
+const.dir <- c("<=",">=","<=",">=",">=",">=","<=",">=","<=")
+```
+
+
+```{r}
+lpSolve::lp(direction = "max", objective.in = ROI,
+            const.mat, const.dir, const.rhs)
+```
+
+
+```{r}
+lpSolve::lp(direction = "max", objective.in = ROI,
+            Amatrix, const.dir, const.rhs)
+```
+
+```{r}
+constraint_descr <- c("Budget 1 Million","Seo adwords atleast 60% of the budget","Facebook max 20% of budget",
+                   "Tv is min 200000","Facebook min contract 80000","Seo min contract 60000","Seo max contract 220000",
+                   "Adwords max contract is 3 times SEO","Allocate Money <= Market Size (which is 1300000)")
+
+constraint_descr
+```
+
+### linprog
+
+```{r}
+library(linprog)
+library(tidyverse)
+```
+
+
+```{r}
+linprog::solveLP(ROI, const.rhs, const.mat, const.dir = const.dir, maximum = TRUE)
+```
+
+
+
+
+

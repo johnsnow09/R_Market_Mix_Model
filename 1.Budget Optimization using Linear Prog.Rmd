@@ -1,0 +1,82 @@
+---
+title: "Marketing Budget Optimization using Linear Programming"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: false
+    toc_depth: 6
+---
+
+
+Video link in R: https://www.youtube.com/watch?v=Qvv-OoUYMKM&list=PLIO9zcmAtJoqfybhXenjL-XRB8Zc-CZEs&index=7
+
+Series Excel links: https://www.youtube.com/watch?v=W6eX9_tyQws&list=PLIO9zcmAtJoqfybhXenjL-XRB8Zc-CZEs&index=4
+
+
+
+```{r}
+# install.packages("linprog")
+```
+
+```{r}
+library(linprog)
+library(tidyverse)
+```
+
+```{r}
+Channel <- c("tv","seo","adwords","facebook")
+ROI <- c(.09, .14, .10, .05)
+
+ROI
+```
+
+```{r}
+rside_cons_desc <- c("Budget","","","Min cost tv","Min cost fb","Min cost seo",
+                     "Max cost seo","Advords 3x seo","Market Size")
+rside_cons <- c(1000,0,0,-200,-80,-60,220,0,1300)
+```
+
+```{r}
+Amatrix = rbind(c(1,1,1,1),
+                c(.6,-.4,-.4,.6),
+                c(-.2,-.2,-.2,.8),
+                c(-1,0,0,0),
+                c(0,0,0,-1),
+                c(0,-1,0,0),
+                c(0,1,0,0),
+                c(0,-3,1,0),
+                c(2.5,2.1,0.9,3.0))
+
+Amatrix
+```
+
+
+```{r}
+linprog::solveLP(cvec = ROI,bvec = rside_cons,
+                 Amat = Amatrix, TRUE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

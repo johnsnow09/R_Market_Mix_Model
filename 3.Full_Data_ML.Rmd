@@ -1,0 +1,396 @@
+---
+title: "Market Mix Models - Pharma"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+    toc_depth: 6
+---
+
+
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(caret)
+```
+
+
+## Data Prep
+
+```{r}
+df1
+```
+
+
+```{r}
+df1_mutated
+```
+
+### Aggr data
+
+```{r}
+df1_monthly_aggr2 <-  df1_mutated %>% 
+  # select(month, sales:salesVisit5, compBrand_4) %>% 
+  group_by(month, accType) %>% 
+  summarise_at(vars(sales:compBrand_4), sum, na.rm = TRUE) %>%
+  ungroup() %>% 
+  mutate(month_only = months(month),
+         month_only = as_factor(month_only),
+         year_only = year(month),
+         year_only = factor(year_only)
+         ) %>% 
+  select(-c(month))
+
+df1_monthly_aggr2
+```
+
+### dummy
+
+```{r}
+dmy <- caret::dummyVars(" ~ .", data = df1_monthly_aggr2,fullRank = T)
+
+df1_transformed <-  data.frame(predict(dmy, newdata = df1_monthly_aggr2))
+df1_transformed
+```
+
+```{r}
+cor.test(df1_transformed$sales,df1_transformed$qty)
+```
+
+Since qty has very high correlation with sales & is also an unknown variable then drop it.
+
+```{r}
+df1_transformed <- df1_transformed %>% 
+  select(-qty)
+
+df1_transformed
+```
+
+### Normalizing 
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df1_transformed, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df1_transformed)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+
+
+### RFE
+
+
+```{r}
+set.seed(100)
+options(warn=-1)
+
+subsets <- c(1:5, 10, 15)
+
+ctrl <- rfeControl(functions = lmFuncs, #rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- rfe(x=df_train %>% select(-sales), y=df_train$sales,
+                 sizes = subsets,
+                 rfeControl = ctrl)
+
+lmProfile
+```
+
+
+### Model 1
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_series3_1 <-  caret::train(sales ~ strategy2+salesVisit2+salesVisit1+strategy1+accType.Private.Clinic, 
+                         data = df_train, method = "lm")
+summary(model_series3_1)
+```
+
+
+## Adstock only
+
+### Adstock vars creation
+
+```{r}
+ads_solver <- function(params, df){
+  
+  ads_rate_strategy1 = params[1]
+   
+  ads_rate_strategy2 = params[2]
+   
+  ads_rate_strategy3 = params[2]
+  
+  ads_rate_salesVisit1 = params[4]
+
+  ads_rate_salesVisit2 = params[5]
+
+  ads_rate_salesVisit3 = params[6]
+
+  ads_rate_salesVisit4 = params[7]
+
+  ads_rate_salesVisit5 = params[8]
+
+  
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df %>% 
+  mutate(ads_strategy1 = strategy1,
+         ads_strategy1 = if_else(row_number() == 1, 
+                               strategy1,
+                               ( (strategy1 + lag(ads_strategy1)*ads_rate_strategy1) )
+                               ) ,
+         
+         ads_strategy2 = strategy2,
+         ads_strategy2 = if_else(row_number() == 1, 
+                               strategy2,
+                               ( (strategy2 + lag(ads_strategy2)*ads_rate_strategy2) )
+                               )  ,
+         
+         ads_strategy3 = strategy3,
+         ads_strategy3 = if_else(row_number() == 1, 
+                               strategy3,
+                               ( (strategy3 + lag(ads_strategy3)*ads_rate_strategy3) )
+                               )  ,
+         ads_salesVisit1 = salesVisit1,
+         ads_salesVisit1 = if_else(row_number() == 1, 
+                               salesVisit1,
+                               ( (salesVisit1 + lag(ads_salesVisit1)*ads_rate_salesVisit1) )
+                               ) ,
+         
+         ads_salesVisit2 = salesVisit2,
+         ads_salesVisit2 = if_else(row_number() == 1, 
+                               salesVisit2,
+                               ( (salesVisit2 + lag(ads_salesVisit2)*ads_rate_salesVisit2) )
+                               )  ,
+         
+         ads_salesVisit3 = salesVisit3,
+         ads_salesVisit3 = if_else(row_number() == 1, 
+                               salesVisit3,
+                               ( (salesVisit3 + lag(ads_salesVisit3)*ads_rate_salesVisit3) )
+                               ) ,
+
+		     ads_salesVisit4 = salesVisit4,
+         ads_salesVisit4 = if_else(row_number() == 1, 
+                               salesVisit4,
+                               ( (salesVisit4 + lag(ads_salesVisit4)*ads_rate_salesVisit4) )
+                               ) ,
+         
+         ads_salesVisit5 = salesVisit5,
+         ads_salesVisit5 = if_else(row_number() == 1, 
+                               salesVisit5,
+                               ( (salesVisit5 + lag(ads_salesVisit5)*ads_rate_salesVisit5) )
+                               ) 
+         )
+  
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(sales ~ ads_strategy1+ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit2+ads_salesVisit3+ads_salesVisit4+ads_salesVisit5, 
+                    data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+  
+}
+```
+
+
+```{r}
+optim(par = c(.1,.1,.1,.1,.1,.1,.1,.1), # initiating 
+      df = df1_monthly_aggr2,
+      fn = ads_solver, 
+      lower = c(.1,.1,.1,.1,.1,.1,.1,.1),
+      upper = c(1,1,1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+```{r}
+
+  ads_rate_strategy1 = 0.3340318
+   
+  ads_rate_strategy2 = 0.1
+   
+  ads_rate_strategy3 = 0.1
+  
+  ads_rate_salesVisit1 = 0.1
+
+  ads_rate_salesVisit2 = 0.1
+
+  ads_rate_salesVisit3 = 1
+
+  ads_rate_salesVisit4 = 0.1
+
+  ads_rate_salesVisit5 = 0.1
+
+  
+  
+  df1_transformed <- df1_monthly_aggr2 %>% 
+  mutate(ads_strategy1 = strategy1,
+         ads_strategy1 = if_else(row_number() == 1, 
+                               strategy1,
+                               ( (strategy1 + lag(ads_strategy1)*ads_rate_strategy1) )
+                               ) ,
+         
+         ads_strategy2 = strategy2,
+         ads_strategy2 = if_else(row_number() == 1, 
+                               strategy2,
+                               ( (strategy2 + lag(ads_strategy2)*ads_rate_strategy2) )
+                               )  ,
+         
+         ads_strategy3 = strategy3,
+         ads_strategy3 = if_else(row_number() == 1, 
+                               strategy3,
+                               ( (strategy3 + lag(ads_strategy3)*ads_rate_strategy3) )
+                               )  ,
+         ads_salesVisit1 = salesVisit1,
+         ads_salesVisit1 = if_else(row_number() == 1, 
+                               salesVisit1,
+                               ( (salesVisit1 + lag(ads_salesVisit1)*ads_rate_salesVisit1) )
+                               ) ,
+         
+         ads_salesVisit2 = salesVisit2,
+         ads_salesVisit2 = if_else(row_number() == 1, 
+                               salesVisit2,
+                               ( (salesVisit2 + lag(ads_salesVisit2)*ads_rate_salesVisit2) )
+                               )  ,
+         
+         ads_salesVisit3 = salesVisit3,
+         ads_salesVisit3 = if_else(row_number() == 1, 
+                               salesVisit3,
+                               ( (salesVisit3 + lag(ads_salesVisit3)*ads_rate_salesVisit3) )
+                               ) ,
+
+		     ads_salesVisit4 = salesVisit4,
+         ads_salesVisit4 = if_else(row_number() == 1, 
+                               salesVisit4,
+                               ( (salesVisit4 + lag(ads_salesVisit4)*ads_rate_salesVisit4) )
+                               ) ,
+         
+         ads_salesVisit5 = salesVisit5,
+         ads_salesVisit5 = if_else(row_number() == 1, 
+                               salesVisit5,
+                               ( (salesVisit5 + lag(ads_salesVisit5)*ads_rate_salesVisit5) )
+                               ) 
+         )
+  
+  df1_transformed
+```
+
+
+### dummy
+
+```{r}
+dmy <- caret::dummyVars(" ~ .", data = df1_transformed,fullRank = T)
+
+df1_transformed <-  data.frame(predict(dmy, newdata = df1_transformed))
+df1_transformed
+```
+
+```{r}
+df1_transformed <- df1_transformed %>% 
+  select(-qty)
+
+df1_transformed
+```
+
+
+### Normalizing 
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df1_transformed, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df1_transformed)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+
+
+### RFE
+
+
+```{r}
+set.seed(100)
+options(warn=-1)
+
+subsets <- c(1:5, 10, 15)
+
+ctrl <- rfeControl(functions = lmFuncs, #rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- rfe(x=df_train %>% select(-sales), y=df_train$sales,
+                 sizes = subsets,
+                 rfeControl = ctrl)
+
+lmProfile
+```
+
+
+### Model 2
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_series3_2 <-  caret::train(sales ~ salesVisit1+salesVisit4+ads_salesVisit4+ads_salesVisit1+ads_strategy3, 
+                         data = df_train, method = "lm")
+summary(model_series3_2)
+```
+
+
+
+
+
+
+

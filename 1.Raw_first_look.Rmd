@@ -1,0 +1,723 @@
+---
+title: "Assignment 1st look"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: true
+    toc_depth: 6
+
+---
+
+## Lib & Data
+
+```{r}
+library(tidyverse)
+library(glue)
+library(skimr)
+library(naniar)
+library(lubridate)
+library(scales)
+library(GGally)
+```
+
+
+```{r}
+options(scipen = 999)
+```
+
+
+```{r}
+df1 <- read_csv("Assessment-Data Scientist/DataScientistAssessment (1)/data_20160405.csv")
+
+df1
+```
+
+```{r}
+df1 <- df1 %>% 
+  select(accID: last_col())
+
+df1
+```
+
+## Data Prep & EDA
+
+```{r}
+summary(df1)
+```
+
+### missing data
+
+```{r}
+naniar::gg_miss_var(df1)
+```
+
+```{r}
+skimr::skim(df1)
+```
+
+### Vars Cardinality
+
+```{r}
+# checking count of unique values in each variable 
+df1 %>% map_df(n_unique)
+```
+
+
+
+```{r}
+# checking variables with count of unique values less than 20
+df1 %>% 
+  map_df(n_unique) %>% 
+  pivot_longer(cols = dplyr::everything(),
+               names_to = "vars", 
+               values_to = "distinct_count",) %>% 
+  filter(distinct_count < 20)
+```
+
+```{r}
+# data distribution by accType
+df1$accType %>% table()
+```
+
+```{r}
+# data distribution by distict
+df1$district %>% table()
+```
+
+```{r}
+# data distribution by salesVisit5
+df1$salesVisit5 %>% table()
+```
+
+```{r}
+# data distribution by compBrand
+df1$compBrand %>% table()
+```
+
+#### Vars to factor
+
+converting character & low cardinality variables to factors
+
+
+```{r}
+df1 <- df1 %>% 
+  mutate(across(.cols = c(accType, district, compBrand), .fns = factor))
+
+df1
+```
+
+### Adding date vars
+
+```{r}
+df1 <- df1 %>% 
+  mutate(month_only = lubridate::month(month, abbr = T, label = T),
+         month_only = factor(month_only, levels = month.abb),
+         year_only = factor(lubridate::year(month))) %>% 
+  
+  select(accID, year_only, month_only, month, dplyr::everything())
+
+df1
+```
+
+### Exploration
+
+#### Correlation Plot
+
+```{r fig.width=6, fig.height=6}
+df1 %>% 
+  select_if(is.numeric) %>% 
+  cor() %>% 
+  corrplot::corrplot(method = "number")
+```
+
+#### Other EDA
+
+data distribution for accTYpe & Brand
+
+```{r}
+# data distribution for accTYpe & Brand
+prop.table(table(df1$accType, df1$compBrand))
+```
+
+data distribution for accTYpe & Brand in %
+
+```{r}
+# data distribution for accTYpe & Brand in %
+prop.table(table(df1$accType, df1$compBrand)) * 100
+```
+
+From above, Seems like we have lot more data for **Comp Brand 4**. 
+
+Below, summarising some imp numeric vars by brand, year & account type
+
+```{r}
+# summarising some imp numeric vars by brand, year & account type 
+df1 %>% 
+  group_by(compBrand, year_only, accType) %>% 
+  summarise_at(c("accSize", "accTargets", "qty"), sum, na.rm = T)
+```
+
+summarising accountsize by year & account type for Comp Brand 4
+
+```{r}
+# summarising accountsize by year & account type for Comp Brand 4
+df1 %>% 
+  group_by(compBrand, year_only, accType) %>% 
+  summarise_at(c("accSize", "accTargets", "qty"), sum, na.rm = T) %>% 
+  
+  filter(compBrand == "4") %>% 
+  
+  ggplot(aes(x = accType, y = accSize, fill = accType)) +
+  geom_col() +
+  facet_wrap(~year_only) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Account Size for each Account type yearly (For Comp Brand 4)")
+```
+
+Account Size for each Account type yearly (For all Brands)
+
+```{r}
+df1 %>% 
+  group_by(year_only, accType) %>% 
+  summarise_at(c("accSize", "accTargets", "qty"), sum, na.rm = T) %>% 
+  
+  # filter(compBrand == "4") %>% 
+  
+  ggplot(aes(x = accType, y = accSize, fill = accType)) +
+  geom_col() +
+  facet_wrap(~year_only) +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Account Size for each Account type yearly (For all Brands)")
+```
+
+Above, account size remains same for 2013 & 2014 but changes in 2015 when All Brands are used
+
+Below, Total account size by months across years 
+
+```{r}
+# Total account size by months across years 
+df1 %>% 
+  arrange(month) %>% 
+  group_by(year_only, month_only) %>% 
+  summarise(accSize = sum(accSize), .groups = "drop") %>% 
+  pivot_wider(id_cols = month_only, names_from = year_only, values_from = accSize) %>% 
+  arrange(month_only)
+```
+
+Above, total account Size remains same for all the months.
+
+Below, Total account Target by months across years 
+
+```{r}
+# Total account Target by months across years 
+df1 %>% 
+  arrange(month) %>% 
+  group_by(year_only, month_only) %>% 
+  summarise(accTargets = sum(accTargets), .groups = "drop") %>% 
+  pivot_wider(id_cols = month_only, names_from = year_only, values_from = accTargets) %>% 
+  arrange(month_only)
+```
+
+Above, Account Target remains same across the years
+
+Below, Total sales by months & years
+
+```{r}
+# Total sales by months & years
+df1 %>% 
+  arrange(month) %>% 
+  group_by(year_only, month_only) %>% 
+  summarise(sales = sum(sales), .groups = "drop") %>% 
+  pivot_wider(id_cols = month_only, names_from = year_only, values_from = sales) %>% 
+  arrange(month_only)
+```
+
+Below, Total sales by months & years for Comp Brand 4 only
+
+```{r}
+# Total sales by months & years for Comp Brand 4 only
+df1 %>% filter(compBrand == 4) %>% 
+  arrange(month) %>% 
+  group_by(year_only, month_only) %>% 
+  summarise(sales = sum(sales), .groups = "drop") %>% 
+  pivot_wider(id_cols = month_only, names_from = year_only, values_from = sales) %>% 
+  arrange(month_only)
+```
+
+Above, seems like sales of Comp Brand 4 stopped from Jun'2015 onward & Brand 5 started from that period
+
+Below, Total Sales timeline by Comp Brand type
+
+```{r}
+df1 %>%
+  arrange(month) %>% 
+  group_by(compBrand, month) %>% 
+  summarise(sales = sum(sales), .groups = "drop") %>% 
+  
+  ggplot(aes(x = month, y = sales, group = compBrand, col = compBrand)) +
+  geom_line() +
+  theme_bw() +
+  labs(title = "Total Sales timeline by Comp Brand type")
+```
+
+Above, Brand 5 started selling from 2015 only & same time Brand 4 stopped selling
+
+Below, Checking data for Comp Brand 5
+
+```{r}
+df1 %>% 
+  filter(compBrand == 5) %>% 
+  arrange(month)
+```
+
+Below, Yearly Growth of Total Sales by Account type
+
+```{r}
+df1 %>% 
+  arrange(month) %>% 
+  group_by(year_only, accType) %>% 
+  summarise(total_sales = sum(sales), .groups = "drop") %>% 
+  
+  ggplot(aes(x = year_only, y = total_sales, fill = accType)) +
+  geom_col() +
+  facet_wrap(~accType) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Yearly Growth of Total Sales by Account type")
+```
+
+
+Above, except `Private` all other account types have more sales in 2015 in comparison to historical years
+
+Below, Growth of Total Sales by Account type (for Comp Brand 4)
+
+```{r}
+df1 %>% filter(compBrand == 4) %>% 
+  arrange(month) %>% 
+  group_by(year_only, accType) %>% 
+  summarise(total_sales = sum(sales), .groups = "drop") %>% 
+  
+  ggplot(aes(x = year_only, y = total_sales, fill = accType)) +
+  geom_col() +
+  facet_wrap(~accType) +
+  labs(title = "Growth of Total Sales by Account type (for Comp Brand 4)") +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6))
+```
+
+Above, for compBrand 4 - only `Polyclinic` has more sales in 2015 in comparison to historical years
+
+Below, Sales Distribution by Comp Brand type
+
+```{r}
+# checking for sales outlier by brand 
+df1 %>% 
+  ggplot(aes(x = compBrand, y = sales)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Sales Distribution by Comp Brand type")
+```
+
+Below, Sales Distribution by Comp Brand type based on Time Variable
+
+```{r fig.width=8, fig.height=8}
+df1 %>% 
+  ggplot(aes(x = compBrand, y = sales)) +
+  geom_boxplot() +
+  facet_wrap(year_only~month_only) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Sales Distribution by Comp Brand type based on Year & Month")
+```
+
+Below, Monthly Sales Pattern each Year
+
+```{r}
+df1 %>% 
+  group_by(year_only, month_only) %>% 
+  summarise(sales = sum(sales, na.rm = T), .groups = "drop") %>% 
+  
+  ggplot(aes(x = month_only, y = sales, group = year_only, col = year_only)) +
+  geom_line() +
+  labs(title = "Monthly Sales Pattern each Year") +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6))
+```
+
+Below, Checking for Relation ship & patterns from multiple variables using pair plots 
+
+```{r fig.width=8, fig.height=8}
+df1 %>% 
+  select(sales, qty,  year_only, accType, compBrand) %>% 
+  ggpairs(aes(col = compBrand), progress = FALSE) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+From above:
+
+1. Average Sales & Averaage qty sold overall of Brand 5 is higher than Brand 4 in all Account Types. This could probably be due to rising trend and Brand 5 being latest shows high values in all.
+
+2. In 2015 Average Sales & Averaage qty sold of Brand 5 is higher than Brand 4 
+
+3. Qty has very high correlation with Sales which is expected.
+
+
+
+Below, Checking for Relation ship & patterns from multiple variables using pair plots
+
+```{r fig.width=8, fig.height=8}
+df1 %>% 
+  select(sales, qty, strategy1, strategy2, strategy3, year_only, accType, compBrand) %>% 
+  ggpairs(aes(col = compBrand), progress = FALSE) +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+From above, Strategy 2 has some correlation with sales & qty 
+
+Below, Checking date range for Comp Brand 4
+
+```{r fig.width=8, fig.height=8}
+df1 %>% 
+  filter(compBrand == 4) %>% 
+  arrange(month) %>% 
+  select(month) %>%  
+  summary()
+```
+
+
+```{r}
+df1 %>%  
+  ggplot(aes(x = strategy1, y = sales)) +
+  geom_point() + geom_smooth(method = "lm", se = F) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy1 Impact on Sales by Linear Regression")
+```
+
+
+```{r}
+df1 %>%  
+  filter(strategy1 != 0) %>% 
+  ggplot(aes(x = strategy1, y = sales)) +
+  geom_point() + geom_smooth(method = "lm", se = F) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy1 Impact on Sales by Linear Regression for only Non 0 Strategy1 input")
+```
+
+```{r}
+df1 %>% 
+  ggplot(aes(x = strategy2, y = sales)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  geom_point() + geom_smooth(method = "lm", se = F) +
+  labs(title = "Strategy2 Impact on Sales by Linear Regression")
+```
+
+```{r}
+df1 %>% 
+  ggplot(aes(x = strategy3, y = sales)) +
+  geom_point() + 
+  geom_smooth(method = "lm", se = F) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy1 Impact on Sales by Linear Regression for only Non 0 Strategy1 input")
+```
+
+```{r fig.width=7, fig.height=5}
+df1 %>% 
+  pivot_longer(cols = strategy1:strategy3, names_to = "stratergy_type", values_to = "expense") %>% 
+  ggplot(aes(x = expense, y = sales, col = stratergy_type)) +
+  geom_point(alpha = .5) +
+  geom_smooth(method = "lm", se = F) +
+  theme_bw() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Impact of Strategies on Sales by Linear Regression")
+  
+```
+
+```{r fig.width=7, fig.height=5}
+df1 %>% 
+  pivot_longer(cols = strategy1:strategy3, names_to = "stratergy_type", values_to = "expense") %>% 
+  ggplot(aes(x = expense, y = sales, col = stratergy_type)) +
+  geom_point(alpha = .5) +
+  geom_smooth(se = F) +
+  theme_bw() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Impact of Strategies on Sales by Regression")
+```
+
+```{r}
+df1 %>% 
+  pivot_longer(cols = strategy1:strategy3, names_to = "stratergy_type", values_to = "expense") %>% 
+  filter(stratergy_type == "strategy1")
+```
+
+
+```{r fig.width=7, fig.height=5}
+df1 %>% 
+  pivot_longer(cols = strategy1:strategy3, names_to = "stratergy_type", values_to = "expense") %>% 
+  ggplot(aes(x = month, y = sales, col = stratergy_type)) +
+  geom_jitter(alpha = .7) +
+  # geom_smooth(method = 'lm') +
+  theme_bw()
+```
+
+```{r}
+df1 %>% 
+  ggplot(aes(x = strategy1, y = sales, col = compBrand)) +
+  geom_point() +
+  geom_smooth() + 
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy1 Impact on Sales by Regression")
+```
+
+Above plot, Strategy 1 for Brand 5 is showing Diminishing Returns and it attained peak around 800k-900k strategy1.
+
+
+```{r}
+df1 %>% 
+  ggplot(aes(x = strategy2, y = sales, col = compBrand)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy2 Impact on Sales by Regression")
+```
+
+Above plot, 
+
+Strategy 2 for Brand 5 is showing Diminishing Returns and it attained peak around 1Mn -1.1Mn strategy2.
+
+Strategy 2 for Brand 4 doesn't show as much elasticity as in Brand 4 but still growth remains constant & doesnt peak before end.
+
+
+```{r}
+df1 %>% 
+  filter(strategy2 != 0) %>% 
+  ggplot(aes(x = strategy2, y = sales, col = compBrand)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy2 Impact on Sales by Regression with only Non 0 Strategy2 inputs")
+```
+
+
+
+```{r}
+df1 %>% 
+  ggplot(aes(x = strategy3, y = sales, col = compBrand)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy3 Impact on Sales by Regression")
+```
+
+Above plot, Strategy 3 doesn't seems to make much of difference in driving sales as majority of it as 0 strategy value.
+
+
+```{r}
+df1 %>% 
+  filter(strategy3 != 0) %>% 
+  ggplot(aes(x = strategy3, y = sales, col = compBrand)) +
+  geom_point() +
+  geom_smooth() +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy3 Impact on Sales by Regression with only Non 0 strategy3 inputs")
+```
+
+
+```{r}
+df1 %>% 
+  filter(strategy3 != 0) %>% 
+  ggplot(aes(x = strategy3, y = sales, col = compBrand)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Strategy3 Impact on Sales by Linear Regr. with only Non 0 strategy3 inputs")
+```
+
+Above plot, Strategy 3 makes good imapct on driving sales for Brand 4 when Strategy 3 is non 0.
+
+Checking for Account ID below
+
+```{r}
+df1$accID %>% table()
+```
+
+```{r}
+df1 %>% 
+  filter(compBrand == 5) %>% 
+  pull(accID) %>% 
+  table()
+```
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  group_by(accID) %>% 
+  summarise(sales = sum(sales, na.rm = T), .groups = "drop") %>% 
+  arrange(desc(sales)) %>% 
+  head(70) %>% 
+  
+  ggplot(aes(x = fct_reorder(accID, sales, max), y = sales)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 90)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Total Sales by top 70 Account ID", 
+       x = "Account ID") +
+  coord_flip()
+```
+
+#### Lin. Regression Plots
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = accType)) +
+  geom_point(alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~marketing_channel) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Marketing Spend to Sales with Linear Regr. by Each Strategy & visit type")
+```
+
+Above plot,
+
+1. Most Spend values comes from salesVisit1  to 3 in Pharmacy account Type
+
+2. Strategy 1 & 2 shows best Return on Investment in Pharmacy
+
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  
+  select(month,accType, sales:salesVisit5) %>% 
+  group_by(month,accType) %>% 
+  summarise_at(vars(sales:salesVisit5), sum, na.rm = TRUE) %>% 
+  
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = accType)) +
+  geom_point(alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~marketing_channel) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Summarised Monthly Marketing Spend to Sales by Each Strategy & visit type")
+```
+
+
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = marketing_channel)) +
+  geom_point(alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~accType) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Marketing Spend to Sales for each Marketing type with Linear Regr. by Account type")
+```
+
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  select(month,accType, sales:salesVisit5) %>% 
+  group_by(month,accType) %>% 
+  summarise_at(vars(sales:salesVisit5), sum, na.rm = TRUE) %>% 
+  
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = marketing_channel)) +
+  geom_point(alpha = .6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  facet_wrap(~accType) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = " Monthly Summarised Marketing Spend to Sales for each Marketing type by Account type")
+```
+
+
+From Above, we may need to build Different Models for different Account Type as the effect of different marketing spends behave little different depending on Account type.
+
+#### Non Lin. Regression Plots
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = accType)) +
+  geom_point(alpha = .6) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~marketing_channel) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Marketing Spend to Sales with Linear Regr. by Each Strategy & visit type")
+```
+
+
+```{r fig.width=8, fig.height=6, warning=FALSE}
+df1 %>% 
+  
+  select(month,accType, sales:salesVisit5) %>% 
+  group_by(month,accType) %>% 
+  summarise_at(vars(sales:salesVisit5), sum, na.rm = TRUE) %>% 
+  
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = accType)) +
+  geom_point(alpha = .6) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~marketing_channel) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Summarised Monthly Marketing Spend to Sales by Each Strategy & visit type")
+```
+
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = marketing_channel)) +
+  geom_point(alpha = .6) +
+  geom_smooth(se = FALSE, formula = y ~ s(x, bs = "cs", k=3)) +
+  facet_wrap(~accType) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = "Marketing Spend to Sales for each Marketing type with Linear Regr. by Account type")
+```
+
+Above plot shows the Saturation in the Sales on various Marketing channel Spends 
+
+
+```{r fig.width=8, fig.height=6}
+df1 %>% 
+  select(month,accType, sales:salesVisit5) %>% 
+  group_by(month,accType) %>% 
+  summarise_at(vars(sales:salesVisit5), sum, na.rm = TRUE) %>% 
+  
+  pivot_longer(cols = strategy1:salesVisit5, 
+               names_to = "marketing_channel", values_to = "spend") %>% 
+  ggplot(aes(x = spend, y = sales, col = marketing_channel)) +
+  geom_point(alpha = .6) +
+  geom_smooth(se = FALSE, span = 0.9) +
+  facet_wrap(~accType) +
+  scale_x_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  scale_y_continuous(labels = unit_format(unit = "Mn", scale = 1e-6)) +
+  labs(title = " Monthly Summarised Marketing Spend to Sales for each Marketing type by Account type")
+```
+
+
+
+
+

@@ -1,0 +1,1197 @@
+---
+title: "Market Mix Models - Pharma"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: true
+      smooth_scroll: true
+    number_sections: true
+    toc_depth: 6
+---
+
+
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(caret)
+```
+
+
+```{r}
+df1
+```
+
+```{r}
+df1_mutated <- df1 %>% 
+  mutate(compBrand = if_else(compBrand == 4, 1,0)) %>% 
+  rename(compBrand_4 = compBrand)
+df1_mutated
+```
+
+
+
+```{r}
+df1_monthly_aggr <- df1_mutated %>% 
+  select(month, sales:salesVisit5, compBrand_4) %>% 
+  group_by(month) %>% 
+  summarise_at(vars(sales:compBrand_4), sum, na.rm = TRUE)
+
+df1_monthly_aggr
+```
+
+### Adstock & Dim Return
+
+Transform & Optimising function
+
+```{r}
+ads_dim_return_solver <- function(params, df){
+  
+  ads_rate_strategy1 = params[1]
+  dim_return_strategy1 = params[2]
+  ads_rate_strategy2 = params[3]
+  dim_return_strategy2 = params[4]
+  ads_rate_strategy3 = params[5]
+  dim_return_strategy3 = params[6]
+  
+  
+  ads_rate_salesVisit1 = params[7]
+  dim_return_salesVisit1 = params[8]
+  ads_rate_salesVisit2 = params[9]
+  dim_return_salesVisit2 = params[10]
+  ads_rate_salesVisit3 = params[11]
+  dim_return_salesVisit3 = params[12]
+  ads_rate_salesVisit4 = params[13]
+  dim_return_salesVisit4 = params[14]
+  ads_rate_salesVisit5 = params[15]
+  dim_return_salesVisit5 = params[16]
+  
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df %>% 
+  mutate(ads_strategy1 = strategy1^dim_return_strategy1,
+         ads_strategy1 = if_else(row_number() == 1, 
+                               strategy1^dim_return_strategy1,
+                               ( (strategy1 + lag(ads_strategy1)*ads_rate_strategy1)^dim_return_strategy1 )
+                               ) ,
+         
+         ads_strategy2 = strategy2^dim_return_strategy2,
+         ads_strategy2 = if_else(row_number() == 1, 
+                               strategy2^dim_return_strategy2,
+                               ( (strategy2 + lag(ads_strategy2)*ads_rate_strategy2)^dim_return_strategy2 )
+                               )  ,
+         
+         ads_strategy3 = strategy3^dim_return_strategy3,
+         ads_strategy3 = if_else(row_number() == 1, 
+                               strategy3^dim_return_strategy3,
+                               ( (strategy3 + lag(ads_strategy3)*ads_rate_strategy3)^dim_return_strategy3 )
+                               )  ,
+         ads_salesVisit1 = salesVisit1^dim_return_salesVisit1,
+         ads_salesVisit1 = if_else(row_number() == 1, 
+                               salesVisit1^dim_return_salesVisit1,
+                               ( (salesVisit1 + lag(ads_salesVisit1)*ads_rate_salesVisit1)^dim_return_salesVisit1 )
+                               ) ,
+         
+         ads_salesVisit2 = salesVisit2^dim_return_salesVisit2,
+         ads_salesVisit2 = if_else(row_number() == 1, 
+                               salesVisit2^dim_return_salesVisit2,
+                               ( (salesVisit2 + lag(ads_salesVisit2)*ads_rate_salesVisit2)^dim_return_salesVisit2 )
+                               )  ,
+         
+         ads_salesVisit3 = salesVisit3^dim_return_salesVisit3,
+         ads_salesVisit3 = if_else(row_number() == 1, 
+                               salesVisit3^dim_return_salesVisit3,
+                               ( (salesVisit3 + lag(ads_salesVisit3)*ads_rate_salesVisit3)^dim_return_salesVisit3 )
+                               ) ,
+
+		     ads_salesVisit4 = salesVisit4^dim_return_salesVisit4,
+         ads_salesVisit4 = if_else(row_number() == 1, 
+                               salesVisit4^dim_return_salesVisit4,
+                               ( (salesVisit4 + lag(ads_salesVisit4)*ads_rate_salesVisit4)^dim_return_salesVisit4 )
+                               ) ,
+         
+         ads_salesVisit5 = salesVisit5^dim_return_salesVisit5,
+         ads_salesVisit5 = if_else(row_number() == 1, 
+                               salesVisit5^dim_return_salesVisit5,
+                               ( (salesVisit5 + lag(ads_salesVisit5)*ads_rate_salesVisit5)^dim_return_salesVisit5 )
+                               ) 
+         )
+  
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(sales ~ ads_strategy1+ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit2+ads_salesVisit3+ads_salesVisit4+ads_salesVisit5, 
+                    data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+  
+}
+```
+
+
+```{r}
+optim(par = c(.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1), # initiating 
+      df = df1_monthly_aggr,
+      fn = ads_dim_return_solver, 
+      lower = c(.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1,.1),
+      upper = c(1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+Using parameters from above to transform vars 
+
+```{r}
+  ads_rate_strategy1 = 0.5474243
+  dim_return_strategy1 = 0.3269003
+  ads_rate_strategy2 = 0.1140976
+  dim_return_strategy2 = 0.5154735
+  ads_rate_strategy3 = 0.6028481
+  dim_return_strategy3 = .1
+  
+  
+  ads_rate_salesVisit1 = 1
+  dim_return_salesVisit1 = 1
+  ads_rate_salesVisit2 = 1
+  dim_return_salesVisit2 = 0.3267252
+  ads_rate_salesVisit3 = 0.5443935
+  dim_return_salesVisit3 = .1
+  ads_rate_salesVisit4 = 0.5145089
+  dim_return_salesVisit4 = 0.8343103
+  ads_rate_salesVisit5 = 0.5458563
+  dim_return_salesVisit5 = 0.5419059
+```
+
+
+
+```{r}
+df1_ads <-  df1_monthly_aggr %>% 
+  mutate(ads_strategy1 = strategy1^dim_return_strategy1,
+         ads_strategy1 = if_else(row_number() == 1, 
+                               strategy1^dim_return_strategy1,
+                               ( (strategy1 + lag(ads_strategy1)*ads_rate_strategy1)^dim_return_strategy1 )
+                               ) ,
+         
+         ads_strategy2 = strategy2^dim_return_strategy2,
+         ads_strategy2 = if_else(row_number() == 1, 
+                               strategy2^dim_return_strategy2,
+                               ( (strategy2 + lag(ads_strategy2)*ads_rate_strategy2)^dim_return_strategy2 )
+                               )  ,
+         
+         ads_strategy3 = strategy3^dim_return_strategy3,
+         ads_strategy3 = if_else(row_number() == 1, 
+                               strategy3^dim_return_strategy3,
+                               ( (strategy3 + lag(ads_strategy3)*ads_rate_strategy3)^dim_return_strategy3 )
+                               )  ,
+         ads_salesVisit1 = salesVisit1^dim_return_salesVisit1,
+         ads_salesVisit1 = if_else(row_number() == 1, 
+                               salesVisit1^dim_return_salesVisit1,
+                               ( (salesVisit1 + lag(ads_salesVisit1)*ads_rate_salesVisit1)^dim_return_salesVisit1 )
+                               ) ,
+         
+         ads_salesVisit2 = salesVisit2^dim_return_salesVisit2,
+         ads_salesVisit2 = if_else(row_number() == 1, 
+                               salesVisit2^dim_return_salesVisit2,
+                               ( (salesVisit2 + lag(ads_salesVisit2)*ads_rate_salesVisit2)^dim_return_salesVisit2 )
+                               )  ,
+         
+         ads_salesVisit3 = salesVisit3^dim_return_salesVisit3,
+         ads_salesVisit3 = if_else(row_number() == 1, 
+                               salesVisit3^dim_return_salesVisit3,
+                               ( (salesVisit3 + lag(ads_salesVisit3)*ads_rate_salesVisit3)^dim_return_salesVisit3 )
+                               ) ,
+
+		     ads_salesVisit4 = salesVisit4^dim_return_salesVisit4,
+         ads_salesVisit4 = if_else(row_number() == 1, 
+                               salesVisit4^dim_return_salesVisit4,
+                               ( (salesVisit4 + lag(ads_salesVisit4)*ads_rate_salesVisit4)^dim_return_salesVisit4 )
+                               ) ,
+         
+         ads_salesVisit5 = salesVisit5^dim_return_salesVisit5,
+         ads_salesVisit5 = if_else(row_number() == 1, 
+                               salesVisit5^dim_return_salesVisit5,
+                               ( (salesVisit5 + lag(ads_salesVisit5)*ads_rate_salesVisit5)^dim_return_salesVisit5 )
+                               ) 
+         )
+
+df1_ads
+```
+
+### Model 1
+
+```{r}
+df_model <- df1_ads %>% 
+  select(sales, contains("ads_"))
+
+df_model
+```
+
+#### Model
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_1 <- caret::train(sales ~ ., data = df_model, method = "lm")
+summary(model_1)
+```
+
+#### VIF
+
+
+```{r}
+mctest::imcdiag(model_1$finalModel, method = "VIF")
+```
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_1_2 <- caret::train(sales ~ ads_strategy1+ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit3+ads_salesVisit4+ads_salesVisit5, 
+                          data = df_model, method = "lm")
+summary(model_1_2)
+```
+
+
+```{r}
+mctest::imcdiag(model_1_2$finalModel, method = "VIF")
+```
+
+
+#### heteroscadasticity
+
+
+```{r}
+lmtest::bptest(model_1_2$finalModel)
+```
+
+No heteroscadasticity in the model as the p-value is greater than 0.05
+
+
+```{r}
+par(mfrow = c(2,2))
+plot(model_1_2$finalModel)
+```
+
+
+
+### Adstock only
+
+```{r}
+ads_solver <- function(params, df){
+  
+  ads_rate_strategy1 = params[1]
+   
+  ads_rate_strategy2 = params[2]
+   
+  ads_rate_strategy3 = params[2]
+  
+  ads_rate_salesVisit1 = params[4]
+
+  ads_rate_salesVisit2 = params[5]
+
+  ads_rate_salesVisit3 = params[6]
+
+  ads_rate_salesVisit4 = params[7]
+
+  ads_rate_salesVisit5 = params[8]
+
+  
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df %>% 
+  mutate(ads_strategy1 = strategy1,
+         ads_strategy1 = if_else(row_number() == 1, 
+                               strategy1,
+                               ( (strategy1 + lag(ads_strategy1)*ads_rate_strategy1) )
+                               ) ,
+         
+         ads_strategy2 = strategy2,
+         ads_strategy2 = if_else(row_number() == 1, 
+                               strategy2,
+                               ( (strategy2 + lag(ads_strategy2)*ads_rate_strategy2) )
+                               )  ,
+         
+         ads_strategy3 = strategy3,
+         ads_strategy3 = if_else(row_number() == 1, 
+                               strategy3,
+                               ( (strategy3 + lag(ads_strategy3)*ads_rate_strategy3) )
+                               )  ,
+         ads_salesVisit1 = salesVisit1,
+         ads_salesVisit1 = if_else(row_number() == 1, 
+                               salesVisit1,
+                               ( (salesVisit1 + lag(ads_salesVisit1)*ads_rate_salesVisit1) )
+                               ) ,
+         
+         ads_salesVisit2 = salesVisit2,
+         ads_salesVisit2 = if_else(row_number() == 1, 
+                               salesVisit2,
+                               ( (salesVisit2 + lag(ads_salesVisit2)*ads_rate_salesVisit2) )
+                               )  ,
+         
+         ads_salesVisit3 = salesVisit3,
+         ads_salesVisit3 = if_else(row_number() == 1, 
+                               salesVisit3,
+                               ( (salesVisit3 + lag(ads_salesVisit3)*ads_rate_salesVisit3) )
+                               ) ,
+
+		     ads_salesVisit4 = salesVisit4,
+         ads_salesVisit4 = if_else(row_number() == 1, 
+                               salesVisit4,
+                               ( (salesVisit4 + lag(ads_salesVisit4)*ads_rate_salesVisit4) )
+                               ) ,
+         
+         ads_salesVisit5 = salesVisit5,
+         ads_salesVisit5 = if_else(row_number() == 1, 
+                               salesVisit5,
+                               ( (salesVisit5 + lag(ads_salesVisit5)*ads_rate_salesVisit5) )
+                               ) 
+         )
+  
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(sales ~ ads_strategy1+ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit2+ads_salesVisit3+ads_salesVisit4+ads_salesVisit5, 
+                    data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+  
+}
+```
+
+
+```{r}
+optim(par = c(.1,.1,.1,.1,.1,.1,.1,.1), # initiating 
+      df = df1_monthly_aggr,
+      fn = ads_solver, 
+      lower = c(.1,.1,.1,.1,.1,.1,.1,.1),
+      upper = c(1,1,1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+```{r}
+
+  ads_rate_strategy1 = 0.8629577
+   
+  ads_rate_strategy2 = 0.9011480
+   
+  ads_rate_strategy3 = .1
+  
+  ads_rate_salesVisit1 = 1
+
+  ads_rate_salesVisit2 = 0.6324733
+
+  ads_rate_salesVisit3 = 0.5727674
+
+  ads_rate_salesVisit4 = 0.6053922
+
+  ads_rate_salesVisit5 = 1
+
+  
+  
+  df1_ads_only <- df1_monthly_aggr %>% 
+  mutate(ads_strategy1 = strategy1,
+         ads_strategy1 = if_else(row_number() == 1, 
+                               strategy1,
+                               ( (strategy1 + lag(ads_strategy1)*ads_rate_strategy1) )
+                               ) ,
+         
+         ads_strategy2 = strategy2,
+         ads_strategy2 = if_else(row_number() == 1, 
+                               strategy2,
+                               ( (strategy2 + lag(ads_strategy2)*ads_rate_strategy2) )
+                               )  ,
+         
+         ads_strategy3 = strategy3,
+         ads_strategy3 = if_else(row_number() == 1, 
+                               strategy3,
+                               ( (strategy3 + lag(ads_strategy3)*ads_rate_strategy3) )
+                               )  ,
+         ads_salesVisit1 = salesVisit1,
+         ads_salesVisit1 = if_else(row_number() == 1, 
+                               salesVisit1,
+                               ( (salesVisit1 + lag(ads_salesVisit1)*ads_rate_salesVisit1) )
+                               ) ,
+         
+         ads_salesVisit2 = salesVisit2,
+         ads_salesVisit2 = if_else(row_number() == 1, 
+                               salesVisit2,
+                               ( (salesVisit2 + lag(ads_salesVisit2)*ads_rate_salesVisit2) )
+                               )  ,
+         
+         ads_salesVisit3 = salesVisit3,
+         ads_salesVisit3 = if_else(row_number() == 1, 
+                               salesVisit3,
+                               ( (salesVisit3 + lag(ads_salesVisit3)*ads_rate_salesVisit3) )
+                               ) ,
+
+		     ads_salesVisit4 = salesVisit4,
+         ads_salesVisit4 = if_else(row_number() == 1, 
+                               salesVisit4,
+                               ( (salesVisit4 + lag(ads_salesVisit4)*ads_rate_salesVisit4) )
+                               ) ,
+         
+         ads_salesVisit5 = salesVisit5,
+         ads_salesVisit5 = if_else(row_number() == 1, 
+                               salesVisit5,
+                               ( (salesVisit5 + lag(ads_salesVisit5)*ads_rate_salesVisit5) )
+                               ) 
+         )
+  
+  df1_ads_only
+```
+
+### Model 2
+
+```{r}
+df_model2 <-  df1_ads_only %>% 
+  select(sales, contains("ads_"))
+
+df_model2
+```
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_2 <-  caret::train(sales ~ ., data = df_model2, method = "lm")
+summary(model_2)
+```
+
+#### VIF
+
+```{r}
+mctest::imcdiag(model_2$finalModel, method = "VIF")
+```
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_2_2 <-  caret::train(sales ~ ads_strategy1+ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit3+ads_salesVisit4+ads_salesVisit5,
+                           data = df_model2, method = "lm")
+summary(model_2_2)
+```
+
+
+```{r}
+mctest::imcdiag(model_2_2$finalModel, method = "VIF")
+```
+
+#### heteroscadasticity
+
+
+```{r}
+lmtest::bptest(model_2_2$finalModel)
+```
+
+No heteroscadasticity in the model as the p-value is greater than 0.05
+
+
+```{r}
+par(mfrow = c(2,2))
+plot(model_2_2$finalModel)
+```
+
+
+
+### Model 3 RFE
+
+#### Normalizing Adstock
+
+
+```{r}
+df_train <- df_model2[,]
+dim(df_train)
+```
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df_train, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+```{r}
+df_train
+```
+
+
+#### RFE
+
+
+```{r}
+set.seed(100)
+options(warn=-1)
+
+subsets <- c(1:5, 10, 15)
+
+ctrl <- rfeControl(functions = lmFuncs, #rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- rfe(x=df_train %>% select(-sales), y=df_train$sales,
+                 sizes = subsets,
+                 rfeControl = ctrl)
+
+lmProfile
+```
+
+#### Model
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_3 <-  caret::train(sales ~ ads_salesVisit1 + ads_salesVisit2 + ads_salesVisit3, 
+                         data = df_train, method = "lm")
+summary(model_3)
+```
+
+#### VIF
+
+```{r}
+mctest::imcdiag(model_3$finalModel, method = "VIF")
+```
+
+#### heteroscadasticity
+
+
+```{r}
+lmtest::bptest(model_3$finalModel)
+```
+
+No heteroscadasticity in the model as the p-value is greater than 0.05
+
+
+```{r}
+par(mfrow = c(2,2))
+plot(model_3$finalModel)
+```
+
+
+
+### Model 4 All vars
+
+
+#### Normalizing data etc.
+
+
+
+```{r}
+df_train <- df_model2[,]
+dim(df_train)
+```
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df_train, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+```{r}
+df_train
+```
+
+
+#### Model
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_4 <-  caret::train(sales ~ ., 
+                    data = df_train, method = "lm")
+summary(model_4)
+```
+
+#### vif
+
+```{r}
+library(mctest)
+```
+
+
+```{r}
+mctest::imcdiag(model_4$finalModel, method = "VIF")
+```
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_4_2 <-  caret::train(sales ~ ads_strategy1+ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit3+ads_salesVisit4+ads_salesVisit5, 
+                    data = df_train, method = "lm")
+summary(model_4_2)
+```
+
+
+```{r}
+mctest::imcdiag(model_4_2$finalModel, method= "VIF")
+```
+
+#### heteroscadasticity
+
+
+```{r}
+lmtest::bptest(model_4_2$finalModel)
+```
+
+No heteroscadasticity in the model as the p-value is greater than 0.05
+
+
+### Model 5 log
+
+```{r}
+df_train <- df_model2[,]
+dim(df_train)
+```
+
+```{r}
+df_train <- log1p(df_train)
+df_train
+```
+
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df_train, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+```{r}
+df_train
+```
+
+
+#### Model
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_5 <-  caret::train(sales ~ ., 
+                    data = df_train, method = "lm")
+summary(model_5)
+```
+
+#### vif
+
+```{r}
+mctest::imcdiag(model_5$finalModel, method = "VIF")
+```
+
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_5_2 <-  caret::train(sales ~ ads_strategy2+ads_strategy3+ads_salesVisit1+ads_salesVisit4+ads_salesVisit5, 
+                    data = df_train, method = "lm")
+summary(model_5_2)
+```
+
+
+
+```{r}
+mctest::imcdiag(model_5_2$finalModel, method = "VIF")
+```
+
+
+#### heteroscadasticity
+
+
+```{r}
+lmtest::bptest(model_5_2$finalModel)
+```
+
+No heteroscadasticity in the model as the p-value is greater than 0.05
+
+
+### Model 6 log RFE
+
+
+```{r}
+df_train <- df_model2[,]
+dim(df_train)
+```
+
+```{r}
+df_train <- log1p(df_train)
+df_train
+```
+
+
+#### Normalizing Adstock
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df_train, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+```{r}
+df_train
+```
+
+
+#### RFE
+
+
+```{r}
+set.seed(100)
+options(warn=-1)
+
+subsets <- c(1:5, 10, 15)
+
+ctrl <- rfeControl(functions = lmFuncs, #rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- rfe(x=df_train %>% select(-sales), y=df_train$sales,
+                 sizes = subsets,
+                 rfeControl = ctrl)
+
+lmProfile
+```
+
+
+#### Model
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_6 <-  caret::train(sales ~ ads_strategy1+ads_strategy2+ads_salesVisit1+ads_salesVisit2+ads_salesVisit3, 
+                    data = df_train, method = "lm")
+summary(model_6)
+```
+
+#### vif
+
+```{r}
+mctest::imcdiag(model_6$finalModel, method = "VIF")
+```
+
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_6_2 <-  caret::train(sales ~ ads_strategy2+ads_salesVisit1+ads_salesVisit2+ads_salesVisit3, 
+                    data = df_train, method = "lm")
+summary(model_6_2)
+```
+
+
+
+```{r}
+mctest::imcdiag(model_6_2$finalModel, method = "VIF")
+```
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_6_3 <-  caret::train(sales ~ ads_strategy2+ads_salesVisit1+ads_salesVisit3, 
+                    data = df_train, method = "lm")
+summary(model_6_3)
+```
+
+
+```{r}
+mctest::imcdiag(model_6_3$finalModel, method = "VIF")
+```
+
+
+### Model 7 All data
+
+```{r}
+df1_ads_only
+```
+
+#### Normalizing Adstock
+
+As qty is highly correlated to sales & qty is also unknown when predicting sales so not selecting qty in training dataset.
+
+```{r}
+df_train <- df1_ads_only %>% 
+  select(-c(month, qty))
+
+df_train
+```
+
+
+```{r}
+dim(df_train)
+```
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df_train, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+```{r}
+df_train
+```
+
+
+#### RFE
+
+
+```{r}
+set.seed(100)
+options(warn=-1)
+
+subsets <- c(1:5, 10, 15)
+
+ctrl <- rfeControl(functions = lmFuncs, #rfFuncs,
+                   method = "repeatedcv",
+                   repeats = 5,
+                   verbose = FALSE)
+
+lmProfile <- rfe(x=df_train %>% select(-sales), y=df_train$sales,
+                 sizes = subsets,
+                 rfeControl = ctrl)
+
+lmProfile
+```
+
+
+#### Model
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_7 <-  caret::train(sales ~ strategy3+ads_strategy3+ads_salesVisit2+ads_salesVisit3, 
+                         data = df_train, method = "lm")
+summary(model_7)
+```
+
+
+#### VIF
+
+```{r}
+mctest::imcdiag(model_7$finalModel, method = "VIF")
+```
+
+
+
+```{r}
+# setting seed for lm
+set.seed(2022)
+
+model_7_2 <-  caret::train(sales ~ ads_strategy3+ads_salesVisit2+ads_salesVisit3, 
+                         data = df_train, method = "lm")
+summary(model_7_2)
+```
+
+```{r}
+mctest::imcdiag(model_7_2$finalModel,method = "VIF")
+```
+
+
+#### heteroscadasticity
+
+
+```{r}
+lmtest::bptest(model_7_2$finalModel)
+```
+
+No heteroscadasticity in the model as the p-value is greater than 0.05
+
+### Timeseries
+
+```{r}
+library(forecast)
+```
+
+
+```{r}
+df1_ads_only
+```
+
+```{r}
+ts_sales <- ts(df1_ads_only$sales, start = c(2013, 10), frequency = 12)
+ts_sales
+```
+
+
+```{r}
+ts_sales_comp <- decompose(ts_sales)
+```
+
+```{r}
+ts_sales_comp
+```
+
+```{r}
+ts_sales_comp$trend
+```
+
+```{r}
+data.frame(Trend=as.matrix(ts_sales_comp$trend), date= zoo::as.Date(time(ts_sales_comp$trend)))
+```
+
+```{r}
+data.frame(Seasonal=as.matrix(ts_sales_comp$seasonal), date= zoo::as.Date(time(ts_sales_comp$trend)))
+```
+
+```{r}
+plot(ts_sales_comp)
+```
+
+### Model 8
+
+
+```{r}
+model_8 <- tslm(ts_sales ~ trend + season) 
+
+summary(model_8)
+```
+
+### Model 9
+
+
+```{r}
+model_9 <- tslm(ts_sales ~ trend + season + ads_strategy1 + ads_strategy2 + ads_strategy3, data = df_train) 
+ 
+summary(model_9)
+```
+
+
+```{r}
+model_9 <- tslm(ts_sales ~ trend + season + ads_strategy1+ads_strategy2+ads_strategy3+salesVisit1+salesVisit2+salesVisit3+salesVisit4+salesVisit5,
+                data = df_train) 
+ 
+summary(model_9)
+```
+
+
+```{r}
+mctest::imcdiag(model_9, method = "VIF")
+```
+
+
+```{r}
+car::vif(model_9)
+```
+
+
+```{r}
+tslm(ts_sales ~ trend, data = df_train) %>% 
+  summary()
+```
+
+```{r}
+tslm(ts_sales~., data = df_train) %>% 
+  summary()
+```
+
+### Model 10
+
+```{r}
+library(forecast)
+```
+
+
+```{r}
+df1_ads_only
+```
+
+
+
+Using Range to convert negative values to positive
+
+```{r}
+preprocess_step <- caret::preProcess(df1_ads_only, method = c("center","scale"))
+
+df_train <- predict(preprocess_step, newdata = df1_ads_only)
+
+
+# To limit range between 0 to 1 & keep it positive
+preprocess_step <- caret::preProcess(df_train, method = c("range"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+# to make it normally distributed
+preprocess_step <- caret::preProcess(df_train, method = c("BoxCox"))
+
+df_train <- predict(preprocess_step, newdata = df_train)
+
+
+anyNA(df_train)
+```
+
+
+
+```{r}
+ts_sales <- ts(df_train$sales, start = c(2013, 10), frequency = 12)
+ts_sales
+```
+
+
+```{r}
+ts_sales_comp <- decompose(ts_sales)
+```
+
+```{r}
+ts_sales_comp
+```
+
+
+```{r}
+plot(ts_sales_comp)
+```
+
+```{r}
+ts_sales_comp$trend
+```
+
+```{r}
+Trend_comp <- data.frame(Trend=as.matrix(ts_sales_comp$trend), date= zoo::as.Date(time(ts_sales_comp$trend))) %>% 
+  pull(Trend)
+
+Trend_comp
+```
+
+```{r}
+Seasonal_comp <- data.frame(Seasonal=as.matrix(ts_sales_comp$seasonal), 
+           date= zoo::as.Date(time(ts_sales_comp$trend))) %>% 
+  pull(Seasonal)
+
+Seasonal_comp
+```
+
+
+#### Model
+
+
+```{r}
+model_10 <- tslm(ts_sales ~ Trend_comp + Seasonal_comp + ads_strategy1 + ads_strategy2 + ads_strategy3,
+                 data = df_train) 
+
+summary(model_10)
+```
+
+
+```{r}
+model_10_2 <- tslm(ts_sales ~ Trend_comp + Seasonal_comp,
+                 data = df_train) 
+
+summary(model_10_2)
+```
+

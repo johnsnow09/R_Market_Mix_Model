@@ -1,0 +1,276 @@
+---
+title: "Market Mix Modle"
+output: 
+  html_notebook:
+    theme: spacelab
+    highlight: tango
+    df_print: paged
+    toc: true    
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: true
+    toc_depth: 6
+  pdf_document:
+    toc: true
+    toc_depth: 6   
+---
+
+
+
+```{r}
+library(tidyverse)
+library(skimr)
+library(naniar)
+library(lubridate)
+library(caret)
+```
+
+
+## Data
+
+### Marketing
+
+```{r}
+read_csv("../Data/MarketingReportCoreCSV.csv")
+```
+
+
+```{r}
+df_marketing <- read_delim("../Data/MarketingReportCoreCSV.csv", delim = ";")
+df_marketing
+```
+
+
+```{r}
+skimr::skim(df_marketing)
+```
+
+```{r}
+df_marketing <- df_marketing %>% 
+  mutate(periodCode = lubridate::ymd(periodCode))
+
+df_marketing
+```
+
+```{r}
+df_marketing$platformCode %>% 
+  table()
+```
+
+
+```{r}
+df_marketing$channelCode %>% 
+  table()
+```
+
+```{r}
+df_marketing_v2 <- df_marketing %>% 
+  select(periodCode, platformCode, marketingInvestment) %>% 
+  rename(c(date=periodCode,channel=platformCode,spend=marketingInvestment))
+
+df_marketing_v2
+```
+
+```{r}
+df_marketing_v2 <- df_marketing_v2 %>% 
+  mutate(spend = str_replace(spend,",","."),
+         spend = as.numeric(spend))
+
+df_marketing_v2
+```
+
+
+```{r}
+df_marketing_v2 %>% 
+  pivot_wider(id_cols = date, names_from = channel, values_from = spend)
+```
+
+```{r}
+df_marketing_v2[duplicated(df_marketing_v2),]
+```
+
+```{r}
+df_marketing_v2 <- df_marketing_v2 %>% 
+  distinct()
+
+df_marketing_v2
+```
+
+```{r}
+df_marketing_v2 %>% 
+  pivot_wider(id_cols = date, names_from = channel, values_from = spend)
+```
+
+```{r}
+df_marketing_v2 %>% 
+  group_by(date,channel) %>% 
+  summarise(count = n()) %>% 
+  arrange(desc(count))
+```
+
+```{r}
+df_marketing_v2 %>% 
+  filter(date == "2020-02-18" & channel == "HeurekaCz")
+```
+
+
+```{r}
+df_marketing_v2 <- df_marketing_v2 %>% 
+  group_by(date,channel) %>% 
+  summarise(spend = sum(spend, na.rm = T), .groups = "drop")
+
+df_marketing_v2
+```
+
+```{r}
+df_marketing_v2 <- df_marketing_v2 %>% 
+  mutate(channel = str_replace_all(channel,"Not tracked","Direct"),
+         channel = str_replace_all(channel,"unpaid","Organic"),
+         channel = str_replace_all(channel,"Silverpop","Email"),
+         channel = str_replace_all(channel,"FacebookBusinessAdsManager","Facebook"))
+
+df_marketing_v2
+```
+
+```{r}
+df_marketing_v3_weekly <- df_marketing_v2 %>% 
+  mutate(week = lubridate::week(date),
+         monthyear = format(date, "%m-%Y"))
+
+df_marketing_v3_weekly
+```
+
+```{r}
+df_marketing_v3_weekly %>% 
+  group_by(date, channel) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+
+```{r}
+df_marketing_v4_agg <- df_marketing_v3_weekly %>%
+  arrange(date) %>% 
+  group_by(week, channel) %>% 
+  summarise(start_date = first(date), 
+            monthyear = first(monthyear),
+            weeklyspend = sum(spend, na.rm = T), .groups = "drop")
+
+df_marketing_v4_agg
+```
+
+
+### Orders
+
+```{r}
+read_csv("../Data/WebTransactionsCSV.csv")
+```
+
+
+
+```{r}
+df_orders <- read_delim("../Data/WebTransactionsCSV.csv",delim = ";")
+
+df_orders
+```
+
+
+```{r}
+df_orders_v2 <- df_orders %>% 
+  select(createdAt,platformCode,revenue) %>% 
+  
+  rename("date" = "createdAt",
+         "channel" = "platformCode")
+
+df_orders_v2
+```
+
+```{r}
+df_orders_v2 %>% 
+  filter(duplicated(.) == TRUE)
+```
+
+```{r}
+df_orders_v2 <- df_orders_v2 %>% 
+  distinct()
+
+df_orders_v2
+```
+
+```{r}
+df_orders_v2 %>% 
+  group_by(date, channel) %>% 
+  summarise(count = n(), .groups = "drop") %>% 
+  arrange(desc(count))
+```
+
+```{r}
+df_orders_v2 <- df_orders_v2 %>% 
+  group_by(date, channel) %>% 
+  summarise(revenue = sum(revenue, na.rm = TRUE), .groups = "drop")
+
+df_orders_v2
+```
+
+```{r}
+df_orders_v2$channel %>% table()
+```
+
+```{r}
+df_orders_v2 <- df_orders_v2 %>% 
+  mutate(channel = str_replace_all(channel,"notset","Direct"),
+         channel = str_replace_all(channel,"Silverpop","Email"))
+
+df_orders_v2
+```
+
+```{r}
+df_orders_v3_weekly <- df_orders_v2 %>% 
+  mutate(week = lubridate::week(date),
+         monthyear = format(date,"%m-%Y"))
+
+df_orders_v3_weekly
+```
+
+```{r}
+df_orders_v4_agg <- df_orders_v3_weekly %>% 
+  arrange(date) %>% 
+  group_by(week, channel) %>% 
+  summarise(start_date = first(date), 
+            monthyear = first(monthyear),
+            weeklyrevenue = sum(revenue, na.rm = T), .groups = "drop")
+
+df_orders_v4_agg
+```
+
+
+### df combine
+
+```{r}
+intersect(colnames(df_marketing_v4_agg),colnames(df_orders_v4_agg))
+```
+
+```{r}
+setdiff(colnames(df_marketing_v4_agg),colnames(df_orders_v4_agg))
+```
+
+```{r}
+df_combined <- merge(df_marketing_v4_agg, df_orders_v4_agg) %>% 
+  arrange(week, channel)
+
+df_combined
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,1429 @@
+---
+title: "Part 2 to trnsfm & build model with adstock, diminishing ret"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: false
+    toc_depth: 6
+---
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(caret)
+library(stargazer) # to view combine regression results
+```
+
+### Best alpha, betas
+
+based on MAE & decent Rsq
+
+```{r}
+simulations %>% 
+  mutate(row_num = row_number()) %>% 
+  filter(row_num == row_selected)
+```
+
+#### alpha,beta const
+
+```{r}
+alpha1 = .4
+alpha2 = .6
+alpha3 = 9e-05
+
+beta1 = 1
+beta2 = .1
+beta3 = 9e-05
+```
+
+```{r}
+df_transfrm_applied <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied
+```
+
+```{r}
+df_transfrm_applied %>% 
+  ggplot(aes(x = FB, y = FB_transfrm)) +
+  geom_point() +
+  theme_bw()
+```
+
+### 1. Model
+
+```{r}
+set.seed(2022)
+
+lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied) %>%
+  summary()
+```
+
+```{r}
+set.seed(2022)
+
+caret::train(form = sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied, method = "lm")$results 
+```
+
+```{r}
+set.seed(2022)
+
+caret::train(form = sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied, method = "lm")$results 
+
+```
+
+```{r}
+set.seed(2022)
+
+model_applied <- caret::train(form = sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied, method = "lm") 
+
+model_applied
+```
+
+```{r}
+stargazer(model_applied$finalModel,type="text") 
+```
+
+```{r}
+stargazer(lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied),type="text")
+```
+
+
+```{r}
+model_applied$results
+```
+
+```{r}
+predctn_model_transm <- predict(model_applied, data = df_transfrm_applied)
+predctn_model_transm
+```
+
+```{r}
+mean(abs(df_transfrm_applied$sales-predctn_model_transm))
+```
+
+```{r}
+df_results_applied <- data.frame(cbind(sales = df_transfrm_applied$sales, 
+                                       predctn_model_transm,
+                                       predctn_model_smpl)
+                                 )
+
+df_results_applied
+```
+
+```{r}
+df_results_applied %>% 
+  mutate(week_num = row_number()) %>% 
+  pivot_longer(cols = sales:predctn_model_smpl, names_to = "sales_type", values_to = "count") %>% 
+  ggplot(aes(x = week_num, y = count, group = sales_type, col = sales_type)) +
+  geom_line(size = 1, alpha = .6) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+df_model_coeff <- model_applied$finalModel$coefficients %>% 
+  data.frame() %>% rownames_to_column() %>% 
+  rename(coeff_name = rowname,
+         coeff_value = '.')
+
+df_model_coeff
+```
+
+```{r}
+df_transfrm_applied %>%
+  pivot_longer(cols = c(FB_transfrm,TV_transfrm,Radio_transfrm),
+               names_to = "sales_channel", values_to = "sales_num") %>% 
+  ggplot(aes(x = sales_num, y = sales, col = sales_channel, group = 1)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE)
+```
+
+Above graph is not treating linear regression as multivariate but it is treating it as a single var Regression
+
+#### Forecast Sales
+
+```{r}
+df_sales_forecast <- 
+  df_transfrm_applied %>% 
+  mutate(time_week = row_number()) %>% 
+  select(time_week, sales, FB_transfrm:Radio_transfrm) %>% 
+  mutate(FB_sales_forecast = FB_transfrm * (df_model_coeff %>% filter(coeff_name == "FB_transfrm"))$coeff_value,
+         TV_sales_forecast = TV_transfrm * (df_model_coeff %>% filter(coeff_name == "TV_transfrm"))$coeff_value,
+         Radio_sales_forecast = Radio_transfrm * (df_model_coeff %>% filter(coeff_name == "Radio_transfrm"))$coeff_value,
+         Baseline = (df_model_coeff %>% filter(coeff_name == "(Intercept)"))$coeff_value) %>% 
+   mutate(sales_forecast = rowSums(.[,c("FB_sales_forecast","TV_sales_forecast","Radio_sales_forecast","Baseline")])  )  
+df_sales_forecast
+```
+
+#### df Sales contrib
+
+```{r}
+df_sales_forecast %>% 
+  summarise(sales = sum(sales,na.rm = T),
+            FB_contrib = sum(FB_sales_forecast, na.rm = T),
+            TV_contrib = sum(TV_sales_forecast, na.rm = T),
+            Radio_contrib = sum(Radio_sales_forecast, na.rm = T),
+            Baseline_contrib = sum(Baseline, na.rm = T),) %>% 
+  mutate(total = rowSums(.[,c(2:5)] )) %>% 
+  mutate(FB_contrib_perc = FB_contrib/total * 100,
+         TV_contrib_perc = TV_contrib/total * 100,
+         Radio_contrib_perc = Radio_contrib/total * 100,
+         Baseline_contrib_perc = Baseline_contrib/total * 100)
+```
+
+#### vif
+
+```{r}
+library(car)
+```
+
+from: https://stackoverflow.com/questions/64592303/how-to-use-vif-in-r
+
+```{r}
+vif(model_applied$finalModel)
+```
+
+```{r}
+set.seed(2022)
+
+vif(lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied))
+```
+
+#### DW Test for Autocorelatiom
+
+```{r}
+car::durbinWatsonTest(model_applied$finalModel)
+```
+
+AS the `p-value > .05` so there is **no autocorrelation** in the model.
+
+#### Residuals Dist. check
+
+```{r}
+hist(df_transfrm_applied$sales-predctn_model_transm)
+```
+
+
+
+### 2. Model w/o Radio
+
+```{r}
+df_transfrm_applied2 <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied2
+```
+
+```{r}
+set.seed(2022)
+
+lm(sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied2) %>% 
+  summary()
+```
+
+```{r}
+set.seed(2022)
+
+lm(sales ~ FB_transfrm+TV_transfrm+Radio,
+   data = df_transfrm_applied2) %>% 
+  summary()
+```
+
+```{r}
+set.seed(2022)
+
+model_applied2 <- caret::train(form = sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied2, method = "lm") 
+
+model_applied2 %>% 
+  summary()
+```
+
+```{r}
+model_applied2$results
+```
+
+```{r}
+predctn_model_transm2 <- predict(model_applied2, data = df_transfrm_applied2)
+predctn_model_transm2
+```
+
+```{r}
+df_results_applied2 <- data.frame(cbind(sales = df_transfrm_applied2$sales, 
+                                       predctn_model_transm2,
+                                       predctn_model_transm,
+                                       predctn_model_smpl)
+                                 )
+
+df_results_applied2
+```
+
+```{r}
+df_results_applied2 %>% 
+  mutate(week_num = row_number()) %>% 
+  pivot_longer(cols = sales:predctn_model_smpl, names_to = "sales_type", values_to = "count") %>% 
+  ggplot(aes(x = week_num, y = count, group = sales_type, col = sales_type)) +
+  geom_line(size = 1, alpha = .8) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+model_applied2$finalModel$coefficients
+```
+
+```{r}
+df_model_coeff2 <- model_applied2$finalModel$coefficients %>% 
+  data.frame() %>% rownames_to_column() %>% 
+  rename(coeff_name = rowname,
+         coeff_value = '.')
+
+df_model_coeff2
+```
+
+```{r}
+df_transfrm_applied2 %>%
+  pivot_longer(cols = c(FB_transfrm,TV_transfrm),
+               names_to = "sales_channel", values_to = "sales_num") %>% 
+  ggplot(aes(x = sales_num, y = sales, col = sales_channel, group = 1)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  xlim(c(0,11)) +
+  ylim(c(0,25))
+```
+
+Above graph is not treating linear regression as multivariate but it is treating it as a single var Regression
+
+### Forecast Sales
+
+```{r}
+df_sales_forecast2 <- 
+  df_transfrm_applied2 %>% 
+  mutate(time_week = row_number()) %>% 
+  select(time_week, sales, FB_transfrm:Radio_transfrm) %>% 
+  mutate(FB_sales_forecast = FB_transfrm * (df_model_coeff2 %>% filter(coeff_name == "FB_transfrm"))$coeff_value,
+         TV_sales_forecast = TV_transfrm * (df_model_coeff2 %>% filter(coeff_name == "TV_transfrm"))$coeff_value,
+         Radio_sales_forecast = Radio_transfrm * 0,
+         Baseline = (df_model_coeff2 %>% filter(coeff_name == "(Intercept)"))$coeff_value) %>% 
+   mutate(sales_forecast = rowSums(.[,c("FB_sales_forecast","TV_sales_forecast","Radio_sales_forecast","Baseline")])  )  
+df_sales_forecast2
+```
+
+### df Sales contrib
+
+```{r}
+df_sales_forecast2 %>% 
+  summarise(sales = sum(sales,na.rm = T),
+            FB_contrib = sum(FB_sales_forecast, na.rm = T),
+            TV_contrib = sum(TV_sales_forecast, na.rm = T),
+            Radio_contrib = sum(Radio_sales_forecast, na.rm = T),
+            Baseline_contrib = sum(Baseline, na.rm = T),) %>% 
+  mutate(total = rowSums(.[,c(2:5)] )) %>% 
+  mutate(FB_contrib_perc = FB_contrib/total * 100,
+         TV_contrib_perc = TV_contrib/total * 100,
+         Radio_contrib_perc = Radio_contrib/total * 100,
+         Baseline_contrib_perc = Baseline_contrib/total * 100)
+```
+
+#### vif
+
+```{r}
+library(car)
+```
+
+```{r}
+vif(model_applied2$finalModel)
+```
+
+```{r}
+set.seed(2022)
+
+vif(lm(sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied2))
+```
+
+
+#### DW Test for Autocorelatiom
+
+```{r}
+car::durbinWatsonTest(model_applied2$finalModel)
+```
+
+AS the `p-value > .05` so there is **no autocorrelation** in the model.
+
+#### Residuals Dist. check
+
+```{r}
+hist(df_transfrm_applied2$sales-predctn_model_transm2)
+```
+
+
+
+### 3. Model (Ridge)
+
+```{r}
+df_transfrm_applied3 <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied3
+```
+
+```{r}
+set.seed(2022)
+
+model_applied3 <-  caret::train(form = sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied3, method = "ridge")
+
+model_applied3
+```
+
+```{r}
+model_applied3$modelInfo$parameters
+```
+
+```{r}
+model_applied3$results
+```
+
+```{r}
+set.seed(2022)
+
+caret::train(form = sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied3, method = "ridge")
+```
+
+```{r}
+predctn_model_transm3 <- predict(model_applied3, data = df_transfrm_applied3)
+predctn_model_transm3
+```
+
+```{r}
+df_results_applied3 <- data.frame(cbind(sales = df_transfrm_applied3$sales, 
+                                       predctn_model_transm3,
+                                       predctn_model_smpl)
+                                 )
+
+df_results_applied3
+```
+
+```{r}
+df_results_applied3 %>% 
+  mutate(week_num = row_number()) %>% 
+  pivot_longer(cols = sales:predctn_model_smpl, names_to = "sales_type", values_to = "count") %>% 
+  ggplot(aes(x = week_num, y = count, group = sales_type, col = sales_type)) +
+  geom_line(size = 1, alpha = .6) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+lambda_use <- min(model_applied3$finalModel$lambda[model_applied3$finalModel$lambda >= model_applied3$bestTune$lambda])
+
+position <- which(model_applied3$finalModel$lambda == lambda_use)
+
+data.frame(coef(model_applied3$finalModel)[, position])
+```
+
+**Imp**: `Ridge` regression reduces the coeff to 0 so there are no coeff above.
+
+#### Residuals Dist. check
+
+```{r}
+hist(df_transfrm_applied3$sales-predctn_model_transm3)
+```
+
+
+### Model 3 ended above
+
+### 4. Model (optim)
+
+Using **optimized params** genereated in file [Optimizer Rmarkdown file](V:/1. R & Python work/3. R/Market Mix Models - Econometric/Adstock - diminishing in R/3. Attempting optim optimizer.Rmd)
+
+#### Optim function call
+
+```{r}
+optim(par = c(.1,.1,.1,.1,.1,.1), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_optim = df_optim,
+      fn = replicate_excel_solver, 
+      lower = c(.001,.001,.001,.001,.001,.001),
+      upper = c(1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+#### alpha beta setting
+
+```{r}
+alpha1 = 0.3596438
+alpha2 = 0.8996762
+alpha3 = 0.0010000
+
+beta1 = 1
+beta2 = 0.0010000
+beta3 = 0.0010000
+```
+
+```{r}
+df_transfrm_applied4 <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied4
+```
+
+#### model
+
+```{r}
+set.seed(2022)
+
+lm(sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied4) %>% 
+  summary()
+```
+
+```{r}
+set.seed(2022)
+
+lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied4) %>% 
+  summary()
+```
+
+```{r}
+set.seed(2022)
+
+model_applied4 <- caret::train(form = sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied4, method = "lm") 
+
+model_applied4 %>% 
+  summary()
+```
+
+```{r}
+model_applied4$results
+```
+
+```{r}
+predctn_model_transm4 <- predict(model_applied4, data = df_transfrm_applied4)
+predctn_model_transm4
+```
+
+```{r}
+df_results_applied4 <- data.frame(cbind(sales = df_transfrm_applied4$sales, 
+                                       predctn_model_transm4,
+                                       predctn_model_transm2,
+                                       predctn_model_smpl)
+                                 )
+
+df_results_applied4
+```
+
+```{r}
+df_results_applied4 %>% 
+  mutate(week_num = row_number()) %>% 
+  pivot_longer(cols = sales:predctn_model_smpl, names_to = "sales_type", values_to = "count") %>% 
+  ggplot(aes(x = week_num, y = count, group = sales_type, col = sales_type)) +
+  geom_line(size = 1, alpha = .8) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+model_applied4$finalModel$coefficients
+```
+
+```{r}
+df_model_coeff4 <- model_applied4$finalModel$coefficients %>% 
+  data.frame() %>% rownames_to_column() %>% 
+  rename(coeff_name = rowname,
+         coeff_value = '.')
+
+df_model_coeff4
+```
+
+#### Forecast Sales
+
+```{r}
+df_sales_forecast4 <- 
+  df_transfrm_applied4 %>% 
+  mutate(time_week = row_number()) %>% 
+  select(time_week, sales, FB_transfrm:Radio_transfrm) %>% 
+  mutate(FB_sales_forecast = FB_transfrm * (df_model_coeff4 %>% filter(coeff_name == "FB_transfrm"))$coeff_value,
+         TV_sales_forecast = TV_transfrm * (df_model_coeff4 %>% filter(coeff_name == "TV_transfrm"))$coeff_value,
+         Radio_sales_forecast = Radio_transfrm * (df_model_coeff4 %>% filter(coeff_name == "Radio_transfrm"))$coeff_value,
+         Baseline = (df_model_coeff4 %>% filter(coeff_name == "(Intercept)"))$coeff_value) %>% 
+   mutate(sales_forecast = rowSums(.[,c("FB_sales_forecast","TV_sales_forecast","Radio_sales_forecast","Baseline")])  )  
+
+df_sales_forecast4
+```
+
+#### df Sales contrib
+
+```{r}
+df_sales_forecast4 %>% 
+  summarise(sales = sum(sales,na.rm = T),
+            FB_contrib = sum(FB_sales_forecast, na.rm = T),
+            TV_contrib = sum(TV_sales_forecast, na.rm = T),
+            Radio_contrib = sum(Radio_sales_forecast, na.rm = T),
+            Baseline_contrib = sum(Baseline, na.rm = T),) %>% 
+  mutate(total = rowSums(.[,c(2:5)] )) %>% 
+  mutate(FB_contrib_perc = FB_contrib/total * 100,
+         TV_contrib_perc = TV_contrib/total * 100,
+         Radio_contrib_perc = Radio_contrib/total * 100,
+         Baseline_contrib_perc = Baseline_contrib/total * 100)
+```
+
+#### vif
+
+```{r}
+library(car)
+```
+
+```{r}
+vif(model_applied4$finalModel)
+```
+
+```{r}
+set.seed(2022)
+
+vif(lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied4))
+```
+
+
+#### DW Test for Autocorelatiom
+
+```{r}
+car::durbinWatsonTest(model_applied4$finalModel)
+```
+
+AS the `p-value > .05` so there is **no autocorrelation** in the model.
+
+#### Residuals Dist. check
+
+```{r}
+hist(df_transfrm_applied4$sales-predctn_model_transm4)
+```
+
+### 4.2 Model W/o Radio
+
+
+#### alpha beta setting
+
+```{r}
+alpha1 = 0.3596438
+alpha2 = 0.8996762
+alpha3 = 0.0010000
+
+beta1 = 1
+beta2 = 0.0010000
+beta3 = 0.0010000
+```
+
+```{r}
+df_transfrm_applied4_2 <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied4_2
+```
+
+#### model
+
+
+```{r}
+set.seed(2022)
+
+model_applied4_2 <- caret::train(form = sales ~ FB_transfrm+TV_transfrm,
+   data = df_transfrm_applied4_2, method = "lm") 
+
+model_applied4_2 %>% 
+  summary()
+```
+
+```{r}
+model_applied4_2$results
+```
+
+```{r}
+predctn_model_transm4_2 <- predict(model_applied4_2, data = df_transfrm_applied4_2)
+predctn_model_transm4_2
+```
+
+```{r}
+df_results_applied4_2 <- data.frame(cbind(sales = df_transfrm_applied4_2$sales, 
+                                       predctn_model_transm4_2,
+                                       predctn_model_transm2,
+                                       predctn_model_smpl)
+                                 )
+
+df_results_applied4_2
+```
+
+```{r}
+df_results_applied4_2 %>% 
+  mutate(week_num = row_number()) %>% 
+  pivot_longer(cols = sales:predctn_model_smpl, names_to = "sales_type", values_to = "count") %>% 
+  ggplot(aes(x = week_num, y = count, group = sales_type, col = sales_type)) +
+  geom_line(size = 1, alpha = .8) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+model_applied4_2$finalModel$coefficients
+```
+
+```{r}
+df_model_coeff4_2 <- model_applied4_2$finalModel$coefficients %>% 
+  data.frame() %>% rownames_to_column() %>% 
+  rename(coeff_name = rowname,
+         coeff_value = '.')
+
+df_model_coeff4_2
+```
+
+#### Forecast Sales
+
+```{r}
+df_sales_forecast4_2 <- 
+  df_transfrm_applied4 %>% 
+  mutate(time_week = row_number()) %>% 
+  select(time_week, sales, FB_transfrm:Radio_transfrm) %>% 
+  mutate(FB_sales_forecast = FB_transfrm * (df_model_coeff4_2 %>% filter(coeff_name == "FB_transfrm"))$coeff_value,
+         TV_sales_forecast = TV_transfrm * (df_model_coeff4_2 %>% filter(coeff_name == "TV_transfrm"))$coeff_value,
+         Radio_sales_forecast = Radio_transfrm * 0,
+         Baseline = (df_model_coeff4_2 %>% filter(coeff_name == "(Intercept)"))$coeff_value) %>% 
+   mutate(sales_forecast = rowSums(.[,c("FB_sales_forecast","TV_sales_forecast","Radio_sales_forecast","Baseline")])  )  
+
+df_sales_forecast4_2
+```
+
+#### df Sales contrib
+
+```{r}
+df_sales_forecast4_2 %>% 
+  summarise(sales = sum(sales,na.rm = T),
+            FB_contrib = sum(FB_sales_forecast, na.rm = T),
+            TV_contrib = sum(TV_sales_forecast, na.rm = T),
+            Radio_contrib = sum(Radio_sales_forecast, na.rm = T),
+            Baseline_contrib = sum(Baseline, na.rm = T),) %>% 
+  mutate(total = rowSums(.[,c(2:5)] )) %>% 
+  mutate(FB_contrib_perc = FB_contrib/total * 100,
+         TV_contrib_perc = TV_contrib/total * 100,
+         Radio_contrib_perc = Radio_contrib/total * 100,
+         Baseline_contrib_perc = Baseline_contrib/total * 100)
+```
+
+#### vif
+
+```{r}
+library(car)
+```
+
+```{r}
+vif(model_applied4_2$finalModel)
+```
+
+
+#### DW Test for Autocorelatiom
+
+```{r}
+car::durbinWatsonTest(model_applied4_2$finalModel)
+```
+
+AS the `p-value > .05` so there is **no autocorrelation** in the model.
+
+#### Residuals Dist. check
+
+```{r}
+hist(df_transfrm_applied4_2$sales-predctn_model_transm4_2)
+```
+
+
+### Inspection
+
+```{r}
+df_transfrm_applied4 %>% 
+  ggplot(aes(x = Radio_transfrm, y = sales)) +
+  geom_point() +
+  theme_bw()
+```
+
+```{r}
+df_transfrm_applied4 %>% 
+  ggplot(aes(x = FB_transfrm, y = sales)) +
+  geom_point() +
+  theme_bw()
+```
+
+
+```{r}
+df_transfrm_applied4 %>% 
+  ggplot(aes(x = TV_transfrm, y = sales)) +
+  geom_point() +
+  theme_bw()
+```
+
+
+### 5. Model Center,Scale
+
+
+#### alpha beta setting
+
+```{r}
+alpha1 = 0.3596438
+alpha2 = 0.8996762
+alpha3 = 0.0010000
+
+beta1 = 1
+beta2 = 0.0010000
+beta3 = 0.0010000
+```
+
+```{r}
+df_transfrm_applied5 <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied5
+```
+
+#### model
+
+```{r}
+set.seed(2022)
+
+model_applied5 <- caret::train(form = sales ~ FB_transfrm+TV_transfrm+Radio_transfrm,
+   data = df_transfrm_applied5, 
+   method = "lm",
+   preProcess = c("center","scale")) 
+
+model_applied5 %>% 
+  summary()
+```
+
+```{r}
+model_applied5$results
+```
+
+```{r}
+predctn_model_transm5 <- predict(model_applied5, data = df_transfrm_applied5)
+predctn_model_transm5
+```
+
+```{r}
+df_results_applied5 <- data.frame(cbind(sales = df_transfrm_applied5$sales, 
+                                       predctn_model_transm5,
+                                       predctn_model_transm2,
+                                       predctn_model_smpl)
+                                 )
+
+df_results_applied5
+```
+
+```{r}
+df_results_applied5 %>% 
+  mutate(week_num = row_number()) %>% 
+  pivot_longer(cols = sales:predctn_model_smpl, names_to = "sales_type", values_to = "count") %>% 
+  ggplot(aes(x = week_num, y = count, group = sales_type, col = sales_type)) +
+  geom_line(size = 1, alpha = .8) +
+  theme_bw() +
+  theme(legend.position = "top")
+```
+
+```{r}
+model_applied5$finalModel$coefficients
+```
+
+```{r}
+df_model_coeff5 <- model_applied5$finalModel$coefficients %>% 
+  data.frame() %>% rownames_to_column() %>% 
+  rename(coeff_name = rowname,
+         coeff_value = '.')
+
+df_model_coeff5
+```
+
+#### Forecast Sales
+
+```{r}
+df_sales_forecast5 <- 
+  df_transfrm_applied5 %>% 
+  mutate(time_week = row_number()) %>% 
+  select(time_week, sales, FB_transfrm:Radio_transfrm) %>% 
+  mutate(FB_sales_forecast = FB_transfrm * (df_model_coeff5 %>% filter(coeff_name == "FB_transfrm"))$coeff_value,
+         TV_sales_forecast = TV_transfrm * (df_model_coeff5 %>% filter(coeff_name == "TV_transfrm"))$coeff_value,
+         Radio_sales_forecast = Radio_transfrm * (df_model_coeff5 %>% filter(coeff_name == "Radio_transfrm"))$coeff_value,
+         Baseline = (df_model_coeff5 %>% filter(coeff_name == "(Intercept)"))$coeff_value) %>% 
+   mutate(sales_forecast = rowSums(.[,c("FB_sales_forecast","TV_sales_forecast","Radio_sales_forecast","Baseline")])  )  
+
+df_sales_forecast5
+```
+
+#### df Sales contrib
+
+```{r}
+df_sales_forecast5 %>% 
+  summarise(sales = sum(sales,na.rm = T),
+            FB_contrib = sum(FB_sales_forecast, na.rm = T),
+            TV_contrib = sum(TV_sales_forecast, na.rm = T),
+            Radio_contrib = sum(Radio_sales_forecast, na.rm = T),
+            Baseline_contrib = sum(Baseline, na.rm = T),) %>% 
+  mutate(total = rowSums(.[,c(2:5)] )) %>% 
+  mutate(FB_contrib_perc = FB_contrib/total * 100,
+         TV_contrib_perc = TV_contrib/total * 100,
+         Radio_contrib_perc = Radio_contrib/total * 100,
+         Baseline_contrib_perc = Baseline_contrib/total * 100)
+```
+
+
+#### DW Test for Autocorelatiom
+
+```{r}
+car::durbinWatsonTest(model_applied5$finalModel)
+```
+
+AS the `p-value > .05` so there is **no autocorrelation** in the model.
+
+
+#### Residuals Dist. check
+
+```{r}
+hist(df_transfrm_applied5$sales-predctn_model_transm5)
+```
+
+
+### 6. Model Log
+
+#### optim log fn call
+
+```{r}
+optim(par = c(.1,.1,.1,.1,.1,.1), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_optim = df_optim,
+      fn = replicate_excel_solver_log, 
+      lower = c(.001,.001,.001,.001,.001,.001),
+      upper = c(1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+
+#### alpha beta setting
+
+```{r}
+alpha1 = 0.4332286
+alpha2 = 0.2605013
+alpha3 = 1
+
+beta1 = 1
+beta2 = 1
+beta3 = 0.0189398
+```
+
+```{r}
+df_transfrm_applied6 <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm_applied6
+```
+
+#### model
+
+```{r}
+set.seed(2022)
+
+model_applied6 <- caret::train(form = sales ~ log(FB_transfrm)+log(TV_transfrm)+Radio_transfrm,
+   data = df_transfrm_applied6, 
+   method = "lm") 
+
+model_applied6 %>% 
+  summary()
+```
+
+```{r}
+model_applied6$results
+```
+
+
+As the `Rsq` & MAE values above are not great so not proceeding with this model.
+
+### stargazer results
+
+```{r}
+stargazer(model_applied$finalModel,model_applied2$finalModel,
+          model_applied4$finalModel,type="text") 
+```
+
+```{r}
+stargazer(model_applied4$finalModel, model_applied4_2$finalModel,type="text") 
+```
+
+
+```{r}
+stargazer(model_applied5$finalModel, model_applied6$finalModel,type="text") 
+```
+
+### budget distr
+
+```{r}
+Last_budget_fb = df_transfrm_applied[nrow(df_transfrm_applied),"FB"]$FB
+Last_budget_tv = df_transfrm_applied[nrow(df_transfrm_applied),"TV"]$TV
+Last_budget_radio = df_transfrm_applied[nrow(df_transfrm_applied),"Radio"]$Radio
+
+New_budget_total = 350
+
+New_budget_fb = 100
+New_budget_tv = 100
+New_budget_radio = New_budget_total - sum(New_budget_fb,New_budget_tv)
+
+a1 = 0.3596438
+a2 = 0.8996762
+a3 = 0.0010000
+b1 = 1.0000000
+b2 = 0.0010000
+b3 = 0.0010000
+
+transformed_fb = (Last_budget_fb * b1 + New_budget_fb)^a1
+transformed_tv = (Last_budget_tv * b2 + New_budget_tv)^a2
+transformed_radio = (Last_budget_radio * b3 + New_budget_radio)^a3
+
+
+contribution_fb = transformed_fb * df_model_coeff[df_model_coeff$coeff_name=="FB_transfrm","coeff_value"]
+contribution_tv = transformed_tv * df_model_coeff[df_model_coeff$coeff_name=="TV_transfrm","coeff_value"]
+contribution_radio = transformed_radio * df_model_coeff[df_model_coeff$coeff_name=="Radio_transfrm","coeff_value"]
+contribution_intercept = df_model_coeff[df_model_coeff$coeff_name=="(Intercept)","coeff_value"]
+
+sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+
+CPO = New_budget_total / sales_prediction
+
+CPO
+```
+
+### budget distr. fn
+
+```{r}
+budget_optimization_fn <- function(params, df_transfrm_applied){
+  
+  ####### known data cal. starts #######
+  New_budget_total = New_budget_fb + New_budget_tv + New_budget_radio
+  
+  Last_budget_fb = df_transfrm_applied[nrow(df_transfrm_applied),"FB"]$FB
+  Last_budget_tv = df_transfrm_applied[nrow(df_transfrm_applied),"TV"]$TV
+  Last_budget_radio = df_transfrm_applied[nrow(df_transfrm_applied),"Radio"]$Radio
+  
+  ####### known data cal. ends #######
+  
+  
+  
+  # a is diminishing return & b is adstock for each respective channel
+  a1 = 0.3596438
+  a2 = 0.8996762
+  a3 = 0.0010000
+  b1 = 1.0000000
+  b2 = 0.0010000
+  b3 = 0.0010000
+  
+  # Unknown params used in below equations
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  transformed_fb = (Last_budget_fb * b1 + New_budget_fb)^a1
+  transformed_tv = (Last_budget_tv * b2 + New_budget_tv)^a2
+  transformed_radio = (Last_budget_radio * b3 + New_budget_radio)^a3
+  
+  
+  contribution_fb = transformed_fb * df_model_coeff[df_model_coeff$coeff_name=="FB_transfrm","coeff_value"]
+  contribution_tv = transformed_tv * df_model_coeff[df_model_coeff$coeff_name=="TV_transfrm","coeff_value"]
+  contribution_radio = transformed_radio * df_model_coeff[df_model_coeff$coeff_name=="Radio_transfrm","coeff_value"]
+  contribution_intercept = df_model_coeff[df_model_coeff$coeff_name=="(Intercept)","coeff_value"]
+  
+  sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+  
+  CPO = (New_budget_fb + New_budget_tv + New_budget_radio) / sales_prediction   # New_budget_total
+  
+  ## Adding constraint
+  
+  if(
+    New_budget_fb + New_budget_tv + New_budget_radio < 550 & 
+    New_budget_fb + New_budget_tv + New_budget_radio > 350
+  ){return(CPO)}
+  
+  return(NA)
+  
+}
+```
+
+
+```{r}
+optim(par = c(100,100,150), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_transfrm_applied = df_transfrm_applied,
+      fn = budget_optimization_fn, 
+      # lower = c(350,350,350),
+      # upper = c(550,550,550),
+      method = "L-BFGS-B")
+```
+
+```{r}
+fn_budget_optim_test <- function(params){
+  
+  
+  # Unknown params used in below equations
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  New_budget_fb + New_budget_tv + New_budget_radio <= 550  
+  New_budget_fb + New_budget_tv + New_budget_radio >= 350
+  
+  # print(paste("Parameters 1,2,3:",New_budget_fb,New_budget_tv,New_budget_radio))
+  
+  contribution_fb = ((70.6 * 1.0 + New_budget_fb)^0.3596438) * 2.015733
+  contribution_tv = ((16 * 0.001 + New_budget_tv)^0.8996762) * 1.073207
+  contribution_radio = (40.8 * 0.001 + New_budget_radio)^0.001 * -6086.523408
+  contribution_intercept = 6081.045489
+  
+  sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+  
+  # print(paste("sales prediction:", sales_prediction))
+  
+  CPO = (New_budget_fb + New_budget_tv + New_budget_radio) / sales_prediction
+  
+  # print(paste("CPO:",CPO))
+  
+  return(CPO)
+  
+}
+
+optim(par = c(10,10,350),
+      fn = fn_budget_optim_test, 
+      lower = c(0,0,0),
+      # upper = c(550,550,550),
+      method = "L-BFGS-B")
+```
+
+
+
+```{r}
+fn_budget_optim_test <- function(params){
+  
+  
+  # Unknown params used in below equations
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  print(paste("Parameters 1,2,3:",New_budget_fb,New_budget_tv,New_budget_radio))
+  
+  contribution_fb = ((70.6 * 1.0 + New_budget_fb)^0.3596438) * 2.015733
+  contribution_tv = ((16 * 0.001 + New_budget_tv)^0.8996762) * 1.073207
+  contribution_radio = (40.8 * 0.001 + New_budget_radio)^0.001 * -6086.523408
+  contribution_intercept = 6081.045489
+  
+  sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+  
+  print(paste("sales prediction:", sales_prediction))
+  
+  CPO = (New_budget_fb + New_budget_tv + New_budget_radio) / sales_prediction
+  
+  print(paste("CPO:",CPO))
+  
+  
+  ## Adding constraint
+  if(
+    (New_budget_fb + New_budget_tv + New_budget_radio) <= 550 & 
+    (New_budget_fb + New_budget_tv + New_budget_radio) >= 350
+  ) return(CPO)
+  
+  else return(NA)
+}
+
+optim(par = c(10,10,350),
+      fn = fn_budget_optim_test, 
+      # lower = c(350,350,350),
+      # upper = c(550,550,550),
+      method = "L-BFGS-B")
+```
+
+
+```{r}
+obj_func <- function(params){
+  
+  # Unknown params used in below equations
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  print(paste("Parameters 1,2,3:",New_budget_fb,New_budget_tv,New_budget_radio))
+  
+  contribution_fb = ((70.6 * 1.0 + New_budget_fb)^0.3596438) * 2.015733
+  contribution_tv = ((16 * 0.001 + New_budget_tv)^0.8996762) * 1.073207
+  contribution_radio = (40.8 * 0.001 + New_budget_radio)^0.001 * -6086.523408
+  contribution_intercept = 6081.045489
+  
+  sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+  
+  print(paste("sales prediction:", sales_prediction))
+  
+  CPO = (New_budget_fb + New_budget_tv + New_budget_radio) / sales_prediction
+  
+  print(paste("CPO:",CPO))
+  return(CPO)
+  
+}
+
+  ## Adding constraint
+
+constrain_func <- function(params){
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  f=NULL
+  
+  f=rbind(f,New_budget_fb + New_budget_tv + New_budget_radio - 550)  
+  f=rbind(f, 350 - (New_budget_fb + New_budget_tv + New_budget_radio))
+  return(list(ceq=NULL,c=f))
+}
+
+NlcOptim::solnl(c(10,10,350),objfun=obj_func,confun=constrain_func, lb = c(0,0,0))
+```
+
+#### Rsolnp:solnp
+
+from: https://stackoverflow.com/questions/30494083/r-optimization-with-equality-and-inequality-constraints
+
+##### Equality
+
+```{r}
+opt_func <- function(params){
+  
+  # Unknown params used in below equations
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  # print(paste("Parameters 1,2,3:",New_budget_fb,New_budget_tv,New_budget_radio))
+  
+  contribution_fb = ((70.6 * 1.0 + New_budget_fb)^0.3596438) * 2.015733
+  contribution_tv = ((16 * 0.001 + New_budget_tv)^0.8996762) * 1.073207
+  contribution_radio = (40.8 * 0.001 + New_budget_radio)^0.001 * -6086.523408
+  contribution_intercept = 6081.045489
+  
+  sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+  
+  # print(paste("sales prediction:", sales_prediction))
+  
+  CPO = (New_budget_fb + New_budget_tv + New_budget_radio) / sales_prediction
+  
+  # print(paste("CPO:",CPO))
+  return(CPO)
+  
+}
+
+  ## Adding constraint
+
+equality_func <- function(params){
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  New_budget_fb + New_budget_tv + New_budget_radio
+}
+
+Rsolnp::solnp(c(5,5,5), #starting values (random - obviously need to be positive and sum to 15)
+      opt_func, #function to optimise
+      eqfun=equality_func, #equality function 
+      eqB=350,   #the equality constraint
+      LB=c(0,0,0) #lower bound for parameters i.e. greater than zero
+      # ,UB=c(100,100,100)) #upper bound for parameters (I just chose 100 randomly)
+)
+```
+
+##### inEquality
+
+```{r}
+opt_func <- function(params){
+  
+  # Unknown params used in below equations
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  print(paste("Parameters 1,2,3:",New_budget_fb,New_budget_tv,New_budget_radio))
+  
+  contribution_fb = ((70.6 * 1.0 + New_budget_fb)^0.3596438) * 2.015733
+  contribution_tv = ((16 * 0.001 + New_budget_tv)^0.8996762) * 1.073207
+  contribution_radio = (40.8 * 0.001 + New_budget_radio)^0.001 * -6086.523408
+  contribution_intercept = 6081.045489
+  
+  sales_prediction = sum(contribution_fb,contribution_tv,contribution_radio,contribution_intercept)
+  
+  print(paste("sales prediction:", sales_prediction))
+  
+  CPO = (New_budget_fb + New_budget_tv + New_budget_radio) / sales_prediction
+  
+  print(paste("CPO:",CPO))
+  return(CPO)
+  
+}
+
+  ## Adding constraint
+
+equality_func <- function(params){
+  New_budget_fb = params[1]
+  New_budget_tv = params[2]
+  New_budget_radio = params[3]
+  
+  return(c(New_budget_fb + New_budget_tv + New_budget_radio,
+           New_budget_fb + New_budget_tv + New_budget_radio))
+            
+}
+
+Rsolnp::solnp(c(5,5,5), #starting values (random - obviously need to be positive and sum to 15)
+      opt_func, #function to optimise
+      eqfun=equality_func, #equality function 
+      ineqLB = 350,   #the equality constraint
+      ineqUB = 550,
+      LB=c(0,0,0) #lower bound for parameters i.e. greater than zero
+      # ,UB=c(100,100,100)) #upper bound for parameters (I just chose 100 randomly)
+)
+```
+
+
+
+
+
+
+
+
+

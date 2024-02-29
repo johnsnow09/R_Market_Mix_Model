@@ -1,0 +1,388 @@
+---
+title: "Trying Optimizer for adstock & dimish return"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: false
+    toc_depth: 6
+---
+
+
+
+```{r}
+library(tidyverse)
+library(caret)
+```
+
+```{r}
+df_optim <- df %>% 
+  select(sales:Radio)
+
+df_optim
+```
+
+### function creation
+
+Transformation part only
+
+```{r}
+fn_test <- function(a1=.1,a2=.1,a3=.1,b1=.1,b2=.1,b3=.1, df_optim){
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df_optim %>% 
+  mutate(FB_transfrm = FB^a1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^a1,
+                               ( (FB + lag(FB_transfrm)*b1)^a1 )
+                               ) ,
+         
+         TV_transfrm = TV^a2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^a2,
+                               ( (TV + lag(TV_transfrm)*b2)^a2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^a3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^a3,
+                               ( (Radio + lag(Radio_transfrm)*b3)^a3 )
+                               ) 
+         )
+         
+  return(df_optim_tranfm)
+  
+  
+}
+```
+
+
+
+```{r}
+fn_test(df_optim = df_optim)
+```
+
+Transformation & modeling complete
+
+```{r}
+fn_test <- function(a1=.1,a2=.1,a3=.1,b1=.1,b2=.1,b3=.1, df_optim){
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df_optim %>% 
+  mutate(FB_transfrm = FB^a1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^a1,
+                               ( (FB + lag(FB_transfrm)*b1)^a1 )
+                               ) ,
+         
+         TV_transfrm = TV^a2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^a2,
+                               ( (TV + lag(TV_transfrm)*b2)^a2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^a3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^a3,
+                               ( (Radio + lag(Radio_transfrm)*b3)^a3 )
+                               ) 
+         )
+         
+  
+  set.seed(2022)
+  model_optim <- lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm, data = df_optim_tranfm)
+
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+         
+  return(MAE)
+}
+```
+
+
+```{r}
+fn_test(df_optim = df_optim)
+```
+
+### solver complete function
+
+```{r}
+replicate_excel_solver <- function(params, df_optim){
+  
+  a1 = params[1]
+  a2 = params[2]
+  a3 = params[3]
+  b1 = params[4]
+  b2 = params[5]
+  b3 = params[6]
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df_optim %>% 
+  mutate(FB_transfrm = FB^a1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^a1,
+                               ( (FB + lag(FB_transfrm)*b1)^a1 )
+                               ) ,
+         
+         TV_transfrm = TV^a2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^a2,
+                               ( (TV + lag(TV_transfrm)*b2)^a2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^a3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^a3,
+                               ( (Radio + lag(Radio_transfrm)*b3)^a3 )
+                               ) 
+         )
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(sales ~ FB_transfrm+TV_transfrm+Radio_transfrm, data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+}
+
+
+optim(par = c(.1,.1,.1,.1,.1,.1), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_optim = df_optim,
+      fn = replicate_excel_solver, 
+      lower = c(.001,.001,.001,.001,.001,.001),
+      upper = c(1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+
+```{r}
+optim(par = c(.1,.1,.1,.1,.1,.1), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_optim = df_optim,
+      fn = replicate_excel_solver, 
+      lower = c(.00001,.00001,.00001,.00001,.00001,.00001),
+      upper = c(1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+### Log Solver fn
+
+
+```{r}
+replicate_excel_solver_log <- function(params, df_optim){
+  
+  a1 = params[1]
+  a2 = params[2]
+  a3 = params[3]
+  b1 = params[4]
+  b2 = params[5]
+  b3 = params[6]
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df_optim %>% 
+  mutate(FB_transfrm = FB^a1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^a1,
+                               ( (FB + lag(FB_transfrm)*b1)^a1 )
+                               ) ,
+         
+         TV_transfrm = TV^a2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^a2,
+                               ( (TV + lag(TV_transfrm)*b2)^a2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^a3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^a3,
+                               ( (Radio + lag(Radio_transfrm)*b3)^a3 )
+                               ) 
+         )
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(sales ~ log(FB_transfrm)+log(TV_transfrm)+Radio_transfrm, data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+}
+
+
+optim(par = c(.1,.1,.1,.1,.1,.1), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_optim = df_optim,
+      fn = replicate_excel_solver_log, 
+      lower = c(.001,.001,.001,.001,.001,.001),
+      upper = c(1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+```{r}
+replicate_excel_solver_log2 <- function(params, df_optim){
+  
+  a1 = params[1]
+  a2 = params[2]
+  a3 = params[3]
+  b1 = params[4]
+  b2 = params[5]
+  b3 = params[6]
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df_optim %>% 
+  mutate(FB_transfrm = FB^a1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^a1,
+                               ( (FB + lag(FB_transfrm)*b1)^a1 )
+                               ) ,
+         
+         TV_transfrm = TV^a2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^a2,
+                               ( (TV + lag(TV_transfrm)*b2)^a2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^a3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^a3,
+                               ( (Radio + lag(Radio_transfrm)*b3)^a3 )
+                               ) 
+         )
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(log(sales) ~ log(FB_transfrm)+log(TV_transfrm)+log(Radio_transfrm), data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+}
+
+
+optim(par = c(.1,.1,.1,.1,.1,.1), # initiating a1=.1,a2=.1 & so on till b3=.1
+      df_optim = df_optim,
+      fn = replicate_excel_solver_log2, 
+      lower = c(.001,.001,.001,.001,.001,.001),
+      upper = c(1,1,1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+
+
+### dftest function applied
+
+```{r}
+df_test <- tribble(
+ ~sales, ~var1, ~var2,
+  22, 230.1,  37.8,
+  10, 44.5,  39.3,
+  9,  17.2,  45.9,
+  19, 151.5,  41.3,
+  13, 180.8,  10.8,
+  7,  8.7,    48.9,
+  12, 57.5,   32.8,
+  13, 120.2,  19.6,
+  5,  8.6,    2.1,
+  11, 199.8,  2.6)
+
+df_test
+```
+
+
+```{r}
+df_test  <- df_test %>% 
+  mutate(var1_transfrm = var1^alpha1,
+         var1_transfrm = if_else(row_number() == 1, 
+                               var1^alpha1,
+                               ( (var1 + lag(var1_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         var2_transfrm = var2^alpha2,
+         var2_transfrm = if_else(row_number() == 1, 
+                               var2^alpha2,
+                               ( (var2 + lag(var2_transfrm)*beta2)^alpha2 )
+                               ) 
+         )
+
+df_test
+```
+
+
+```{r}
+test_excel_solver <- function(params, df_optim){
+  
+  alpha1 = params[1]
+  alpha2 = params[2]
+  beta1 = params[3]
+  beta2 = params[4]
+  
+  # transforming variables using a,b parameters that need to figured out
+  df_optim_tranfm <- df_optim %>% 
+  mutate(var1_transfrm = var1^alpha1,
+         var1_transfrm = if_else(row_number() == 1, 
+                               var1^alpha1,
+                               ( (var1 + lag(var1_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         var2_transfrm = var2^alpha2,
+         var2_transfrm = if_else(row_number() == 1, 
+                               var2^alpha2,
+                               ( (var2 + lag(var2_transfrm)*beta2)^alpha2 )
+                               ) 
+         )
+         
+  # setting seed for lm
+  set.seed(2022)
+  
+  
+  # creating model
+  model_optim <- lm(sales ~ var1_transfrm+var2_transfrm, data = df_optim_tranfm)
+  
+  # predicted values
+  y_hat = predict(model_optim, df_optim_tranfm)
+
+  # MAE that we need to minimize using optim
+  MAE <- mean(abs(df_optim_tranfm$sales - y_hat))
+  MAE
+  
+}
+
+# Using optim function 
+optim(par = c(.1,.1,.1,.1), # initiating alpha1=.1,alpha2=.1 & so on till beta2=.1
+      df_optim = df_test,
+      fn = test_excel_solver, 
+      lower = c(.00001,.00001,.00001,.00001),
+      upper = c(1,1,1,1),
+      method = "L-BFGS-B")
+```
+
+### test end
+
+
+
+

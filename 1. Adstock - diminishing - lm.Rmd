@@ -1,0 +1,450 @@
+---
+title: "Part 1 to explore & find adstock, diminishing ret"
+output: 
+  html_notebook:
+    highlight: tango
+    df_print: paged
+    toc: true
+    toc_float: 
+      collapsed: false
+      smooth_scroll: false
+    number_sections: false
+    toc_depth: 6
+---
+
+
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(caret)
+```
+
+### Data
+
+```{r}
+readxl::read_xlsx("../Adstock - diminishing MMM.xlsx", sheet = "Raw Data") %>% 
+  mutate(Date = as.integer(Date),
+         Date = as.Date(Date, origin = "1900-01-01")) 
+```
+
+
+```{r}
+df <- readxl::read_xlsx("../Adstock - diminishing MMM.xlsx", sheet = "Raw Data") %>% 
+  mutate(s.no = row_number()) 
+
+df
+```
+
+### smpl Regr.
+
+
+```{r}
+df %>% 
+  caret::train(sales ~ FB + TV, data = ., method = "lm") %>% 
+  summary()
+```
+
+
+
+```{r}
+df %>% 
+  caret::train(sales ~ FB, data = ., method = "lm") %>% 
+  summary()
+```
+
+```{r}
+df %>% 
+  caret::train(sales ~ TV, data = ., method = "lm") %>% 
+  summary()
+```
+
+```{r}
+df %>% 
+  caret::train(sales ~ Radio, data = ., method = "lm") %>% 
+  summary()
+```
+
+
+
+```{r}
+model_smpl <- df %>% 
+  select(sales:Radio) %>% 
+  caret::train(sales ~ ., data = ., method = "lm")
+
+model_smpl
+```
+
+```{r}
+summary(model_smpl)
+```
+
+```{r}
+ggplot(varImp(model_smpl))
+```
+
+#### var imp
+
+```{r}
+predctn_model_smpl <- predict(model_smpl, df)
+
+predctn_model_smpl
+```
+
+#### regr results df
+
+```{r}
+df_results <- cbind(df, predctn_model_smpl)
+
+df_results
+```
+
+#### plot results Vs orig
+
+```{r}
+df_results %>% 
+  ggplot(aes(x = Time, y = sales)) +
+  geom_line(group = 1) +
+  geom_line(aes(y = predctn_model_smpl), group = 1)
+```
+
+
+```{r}
+df_results %>% 
+  pivot_longer(cols = c(sales,predctn_model_smpl), names_to = "series", values_to = "output") %>% 
+  mutate(series = as_factor(series)) %>% 
+  
+  ggplot(aes(x = Time, y = output, col = series, group = series)) +
+  geom_line(size = 1) +
+  theme_bw() +
+  theme(legend.position = "top",
+        axis.text.x = element_text(angle = 90))
+```
+
+#### Rsq, RMSE,MAE
+
+```{r}
+model_smpl$results
+```
+
+RSq: `r model_smpl$results$Rsquared`
+
+RMSE: `r model_smpl$results$RMSE`
+
+MAE:  `r model_smpl$results$MAE`
+
+
+```{r}
+df %>% head()
+```
+
+### df transform vars
+
+```{r}
+df_transfrm <- df %>% 
+  select(sales:Radio)
+
+df_transfrm
+```
+
+#### alpha,beta const
+
+```{r}
+alpha1 = .1
+alpha2 = .1
+alpha3 = .1
+
+beta1 = .1
+beta2 = .1
+beta3 = .1
+```
+
+
+```{r}
+df_transfrm <- df_transfrm %>% 
+  mutate(FB_transfrm = FB^alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^alpha1,
+                               ( (FB + lag(FB_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         TV_transfrm = TV^alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^alpha2,
+                               ( (TV + lag(TV_transfrm)*beta2)^alpha2 )
+                               )  ,
+         
+         Radio_transfrm = Radio^alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^alpha3,
+                               ( (Radio + lag(Radio_transfrm)*beta3)^alpha3 )
+                               ) 
+         )
+
+df_transfrm
+```
+
+#### df test
+
+```{r}
+df_test <- tribble(
+ ~sales, ~var1, ~var2,
+  22, 230.1,  37.8,
+  10, 44.5,  39.3,
+  9,  17.2,  45.9,
+  19, 151.5,  41.3,
+  13, 180.8,  10.8,
+  7,  8.7,    48.9,
+  12, 57.5,   32.8,
+  13, 120.2,  19.6,
+  5,  8.6,    2.1,
+  11, 199.8,  2.6)
+
+df_test
+```
+
+```{r}
+df_test  <- df_test %>% 
+  mutate(var1_transfrm = var1^alpha1,
+         var1_transfrm = if_else(row_number() == 1, 
+                               var1^alpha1,
+                               ( (var1 + lag(var1_transfrm)*beta1)^alpha1 )
+                               ) ,
+         
+         var2_transfrm = var2^alpha2,
+         var2_transfrm = if_else(row_number() == 1, 
+                               var2^alpha2,
+                               ( (var2 + lag(var2_transfrm)*beta2)^alpha2 )
+                               ) 
+         )
+
+df_test
+```
+
+#### df test regr
+
+```{r}
+first_model <- lm(sales ~ var1_transfrm + var2_transfrm, data = df_test)
+
+summary(first_model)
+```
+
+```{r}
+first_model <- caret::train(form = sales ~ var1_transfrm + var2_transfrm, 
+                            data = df_test,
+                            method = "lm")
+
+summary(first_model)
+```
+
+
+```{r}
+first_model$results
+```
+
+```{r}
+first_model$results$Rsquared
+```
+
+### alpha beta simulations
+
+#### alpha beta comb.
+
+```{r}
+simulations <- crossing(alpha1 = seq(0.1,1,0.2),
+         beta1 = seq(0.1,1,0.2),
+         alpha2 = seq(0.1,1,0.2),
+         beta2 = seq(0.1,1,0.2),
+         alpha3 = seq(0.1,1,0.2),
+         beta3 = seq(0.1,1,0.2))
+
+simulations
+```
+
+As we have created 15k + combinations so will create 15k + models below to find the best `alpha`, `beta` for var transformations.
+
+```{r}
+simulations <- crossing(alpha1 = seq(0,1,0.1),
+         beta1 = seq(0,1,0.1),
+         alpha2 = seq(0,1,0.1),
+         beta2 = seq(0,1,0.1),
+         alpha3 = .00009,
+         beta3 = .00009)
+
+simulations
+```
+
+
+
+#### df simulation
+
+```{r}
+df_simulation <- df %>% 
+  select(sales:Radio)
+
+df_simulation
+```
+
+#### Parallel & lm function
+
+```{r}
+library(parallel)
+library(doParallel)
+
+no_cores <- parallel::detectCores() - 2
+  #Leave one core available for Operating system
+
+  cluster <- makePSOCKcluster(no_cores)
+  registerDoParallel(cluster)
+  
+  cat("Model amped and ready to go with:", no_cores, "cores. \n")
+```
+
+this will take around 100 mins = 2 hrs to run as it took 1 min to run just 156 rows
+
+```{r}
+df_results <- data.frame(
+           RMSE = double(),
+           Rsq = double(),
+           MAE = double()
+           )
+
+
+for (loop_count in 1:nrow(simulations)){ # 2   
+  if(loop_count %% 500 == 0) print(loop_count)
+  
+  ##################################################################################################
+  
+  # transform data vars & save as new dataframe
+  df_model <- df_simulation %>% 
+  mutate(FB_transfrm = FB^simulations[loop_count,"alpha1"]$alpha1,
+         FB_transfrm = if_else(row_number() == 1, 
+                               FB^simulations[loop_count,"alpha1"]$alpha1,
+                               ( (FB +
+                                    lag(FB_transfrm)*simulations[loop_count,"beta1"]$beta1)^simulations[loop_count,"alpha1"]$alpha1 )
+                               ),
+         
+         TV_transfrm = TV^simulations[loop_count,"alpha2"]$alpha2,
+         TV_transfrm = if_else(row_number() == 1, 
+                               TV^simulations[loop_count,"alpha2"]$alpha2,
+                               ( (TV +
+                                    lag(TV_transfrm)*simulations[loop_count,"beta2"]$beta2)^simulations[loop_count,"alpha2"]$alpha2 )
+                               ),
+         
+         Radio_transfrm = Radio^simulations[loop_count,"alpha3"]$alpha3,
+         Radio_transfrm = if_else(row_number() == 1, 
+                               Radio^simulations[loop_count,"alpha3"]$alpha3,
+                               ( (Radio +
+                                    lag(Radio_transfrm)*simulations[loop_count,"beta3"]$beta3)^simulations[loop_count,"alpha3"]$alpha3 )
+                               )
+         
+         
+         ) %>% 
+    select(sales, FB_transfrm, TV_transfrm, Radio_transfrm)
+  
+  
+  ##################################################################################################
+  
+  # set seed
+  set.seed(2022)
+  
+  # create lm model using transformed vars
+  fit_model <- caret::train(form = sales ~ ., 
+                            data = df_model,
+                            method = "lm")
+  
+  # print(summary(fit_model))
+  # Rsq_val <- fit_model$results$Rsquared
+  
+  df_results <-  rbind(df_results,
+                        fit_model$results %>% 
+                        select(RMSE:MAE)
+                        )
+}
+
+df_results
+```
+
+
+```{r}
+## When you are done:
+stopCluster(cluster)
+```
+
+### Results MAE, Rsq
+
+```{r}
+df_results %>% 
+  mutate(row_num = row_number()) %>% 
+  filter(Rsquared == max(Rsquared))
+```
+
+
+```{r}
+df_results %>% 
+  mutate(row_num = row_number()) %>% 
+  arrange(desc(Rsquared))
+```
+
+
+```{r}
+df_results %>% 
+  mutate(row_num = row_number()) %>% 
+  arrange(RMSE)
+```
+
+
+```{r}
+df_results %>% 
+  mutate(row_num = row_number()) %>% 
+  arrange(MAE)
+```
+
+#### Best alpha, beta values
+
+Selecting row_number 6808 from above
+
+```{r}
+row_selected <- df_results %>%
+  mutate(row_num = row_number()) %>% 
+  arrange(MAE) %>%
+  head(1) %>% 
+  pull(row_num)
+
+row_selected
+```
+
+
+```{r}
+simulations %>% 
+  mutate(row_num = row_number()) %>% 
+  filter(row_num == row_selected)
+```
+
+### Matrix
+
+```{r}
+matrix(c(5,10,1,3),nrow = 2)
+```
+
+
+```{r}
+matrix(c(5,10,1,3),ncol = 2)
+```
+
+```{r}
+paste(df$Radio,collapse = ",") 
+```
+
+```{r}
+df_matrix <- matrix(c(230.1,44.5,17.2,151.5,180.8,8.7,57.5,120.2,8.6,199.8,66.1,214.7,23.8,97.5,204.1,195.4,67.8,281.4,69.2,147.3,218.4,237.4,13.2,228.3,62.3,262.9,142.9,240.1,248.8,70.6,
+         
+         37.8,39.3,45.9,41.3,10.8,48.9,32.8,19.6,2.1,2.6,5.8,24,35.1,7.6,32.9,47.7,36.6,39.6,20.5,23.9,27.7,5.1,15.9,16.9,12.6,3.5,29.3,16.7,27.1,16,
+         
+         69.2,45.1,69.3,58.5,58.4,75,23.5,11.6,1,21.2,24.2,4,65.9,7.2,46,52.9,114,55.8,18.3,19.1,53.4,23.5,49.6,26.2,18.3,19.5,12.6,22.9,22.9,40.8), ncol = 3)
+
+df_matrix
+```
+
+
+
